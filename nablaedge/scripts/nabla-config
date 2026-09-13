@@ -1,6 +1,6 @@
 #!/bin/bash
-# nabla-config — panel ncurses Nabla Edge (red + medios USB/SD)
-# Uso: sudo nabla-config
+# nabla-config — Nabla Edge ncurses panel (network + USB/SD media)
+# Usage: sudo nabla-config
 set -euo pipefail
 
 VERSION="0.8.0"
@@ -17,7 +17,7 @@ TITLE="Nabla Config $VERSION"
 
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then
-    echo "Necesita root: sudo nabla-config $*" >&2
+    echo "Requires root: sudo nabla-config $*" >&2
     exit 1
   fi
 }
@@ -38,8 +38,8 @@ ask_yes() {
   if have_wt; then
     whiptail --title "$t" --yesno "$q" 12 72
   else
-    read -r -p "$q [s/N] " a
-    case "$a" in s|S|y|Y) return 0 ;; *) return 1 ;; esac
+    read -r -p "$q [y/N] " a
+    case "$a" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
   fi
 }
 
@@ -55,13 +55,13 @@ ask_input() {
 
 run_vpn() {
   need_root
-  [ -x "$VPN_BIN" ] || { msg "Error" "No encuentro vpn-mode"; return 1; }
+  [ -x "$VPN_BIN" ] || { msg "Error" "Cannot find vpn-mode"; return 1; }
   "$VPN_BIN" "$@"
 }
 
 run_image() {
   need_root
-  [ -x "$IMG_BIN" ] || { msg "Error" "No encuentro nabla-image"; return 1; }
+  [ -x "$IMG_BIN" ] || { msg "Error" "Cannot find nabla-image"; return 1; }
   "$IMG_BIN" "$@"
 }
 
@@ -97,17 +97,17 @@ list_candidate_disks() {
     note=""
     protected=0
     if echo "$mnt" | grep -q '/mnt/usbdata'; then
-      note="PROTEGIDO usbdata"
+      note="PROTECTED usbdata"
       protected=1
     elif echo "$label" | grep -qi 'usbdata'; then
-      note="PROTEGIDO label usbdata"
+      note="PROTECTED label usbdata"
       protected=1
     elif [ -n "$mnt" ]; then
-      note="montado:$mnt"
+      note="mounted:$mnt"
     else
-      note="libre"
+      note="available"
     fi
-    # Prefer USB; also allow mmc (lectores SD USB a veces salen mmc) y vacío
+    # Prefer USB; also allow mmc (USB SD readers sometimes show as mmc)
     if [ "${tran:-}" = usb ] || [ "${tran:-}" = mmc ] || [ -z "${tran:-}" ]; then
       echo "${name}|${size}|${model}|${label:-—}|${mnt:-—}|${note}|${protected}"
     fi
@@ -119,7 +119,7 @@ pick_disk() {
   local lines=() tags=() i=0 line name size model label mnt note prot desc
   mapfile -t lines < <(list_candidate_disks)
   if [ "${#lines[@]}" -eq 0 ]; then
-    msg "Medios" "No hay discos USB/SD candidatos.\nEnchufa un pendrive o lector y reintenta.\n(No se listan la SD del sistema ni usbdata.)"
+    msg "Media" "No USB/SD disk candidates found.\nPlug in a drive or card reader and try again.\n(System SD and usbdata are not listed.)"
     return 1
   fi
 
@@ -131,11 +131,11 @@ pick_disk() {
       [ "$label" != "—" ] && [ -n "$label" ] && desc="${desc} [${label}]"
       args+=("$name" "$desc")
     done
-    name=$(whiptail --title "Elegir disco ($purpose)" --menu \
-      "Se BORRARÁ el disco elegido.\nusbdata y la SD del sistema no aparecen (o van marcados)." \
+    name=$(whiptail --title "Select disk ($purpose)" --menu \
+      "The selected disk will be ERASED.\nusbdata and system SD are not listed (or marked)." \
       20 78 10 "${args[@]}" 3>&1 1>&2 2>&3) || return 1
   else
-    echo "Discos:"
+    echo "Disks:"
     i=1
     for line in "${lines[@]}"; do
       IFS='|' read -r name size model label mnt note prot <<<"$line"
@@ -159,16 +159,16 @@ pick_disk() {
     fi
   done
   if [ "$prot" = "1" ]; then
-    msg "Bloqueado" "/dev/$name está protegido ($note).\nNo se escribe ahí."
+    msg "Protected" "/dev/$name is protected ($note).\nCannot write here."
     return 1
   fi
 
-  if ! ask_yes "Confirmar borrado" \
-    "Vas a escribir ($purpose) en:\n\n  /dev/$name\n  $size · $model\n  $note\n\nTODO el contenido se pierde. ¿Seguro?"; then
+  if ! ask_yes "Confirm erase" \
+    "You are about to write ($purpose) to:\n\n  /dev/$name\n  $size · $model\n  $note\n\nALL data will be lost. Continue?"; then
     return 1
   fi
   # double confirm for large/desktop
-  if ! ask_yes "Última confirmación" "CONFIRMA: borrar /dev/$name y grabar Nabla ($purpose)?"; then
+  if ! ask_yes "Final confirmation" "CONFIRM: erase /dev/$name and write Nabla ($purpose)?"; then
     return 1
   fi
 
@@ -182,17 +182,17 @@ pick_disk() {
   echo "/dev/$name"
 }
 
-menu_medios() {
+menu_media() {
   while true; do
     local c=""
     if have_wt; then
-      c=$(whiptail --title "$TITLE · Medios" --menu "USB / SD (sin Pi Imager)" 18 72 8 \
-        "1" "Nabla Pi OS completo (desktop) → USB/SD" \
+      c=$(whiptail --title "$TITLE · Media" --menu "USB / SD (no Pi Imager)" 18 72 8 \
+        "1" "Nabla Pi OS full (desktop) → USB/SD" \
         "2" "Nabla Pi OS lite → USB/SD" \
-        "3" "OTP enabler (Pi 3B, una vez) → SD/USB" \
-        "4" "Listar discos" \
-        "5" "Descargar imagen base (cache)" \
-        "6" "Volver" \
+        "3" "OTP enabler (Pi 3B, once) → SD/USB" \
+        "4" "List disks" \
+        "5" "Download base image (cache)" \
+        "6" "Back" \
         3>&1 1>&2 2>&3) || return 0
     else
       echo "1 OS desktop  2 OS lite  3 OTP  4 list  5 fetch  6 back"
@@ -202,27 +202,27 @@ menu_medios() {
       1)
         local dev hn oct
         dev="$(pick_disk os)" || continue
-        hn="$(ask_input "Hostname" "Nombre de la Pi nueva:" "edge")" || continue
-        oct="$(ask_input "Octeto" "Subnet 10.100.N.0/24 — N:" "3")" || continue
-        msg "Grabando" "Escribiendo desktop en $dev…\nPuede tardar (descarga + dd).\nMira la terminal si SSH."
+        hn="$(ask_input "Hostname" "Name for the new Pi:" "edge")" || continue
+        oct="$(ask_input "Octet" "Subnet 10.100.N.0/24 — N:" "3")" || continue
+        msg "Writing" "Writing desktop to $dev…\nThis may take a while (download + dd).\nCheck terminal if SSH."
         # leave whiptail; show progress on tty
         clear 2>/dev/null || true
         if run_image write-usb "$dev" --desktop --hostname "$hn" --octeto "$oct"; then
-          msg "OK" "Nabla Pi OS (desktop) en $dev.\nArranca la Pi: first-boot instala Edge."
+          msg "OK" "Nabla Pi OS (desktop) on $dev.\nBoot the Pi: first-boot installs Edge."
         else
-          msg "Error" "Falló la escritura. Revisa terminal / logs."
+          msg "Error" "Write failed. Check terminal / logs."
         fi
         ;;
       2)
         local dev hn oct
         dev="$(pick_disk os)" || continue
-        hn="$(ask_input "Hostname" "Nombre de la Pi nueva:" "edge")" || continue
-        oct="$(ask_input "Octeto" "Subnet 10.100.N.0/24 — N:" "3")" || continue
+        hn="$(ask_input "Hostname" "Name for the new Pi:" "edge")" || continue
+        oct="$(ask_input "Octet" "Subnet 10.100.N.0/24 — N:" "3")" || continue
         clear 2>/dev/null || true
         if run_image write-usb "$dev" --lite --hostname "$hn" --octeto "$oct"; then
-          msg "OK" "Nabla Pi OS (lite) en $dev."
+          msg "OK" "Nabla Pi OS (lite) on $dev."
         else
-          msg "Error" "Falló la escritura."
+          msg "Error" "Write failed."
         fi
         ;;
       3)
@@ -230,38 +230,38 @@ menu_medios() {
         dev="$(pick_disk otp)" || continue
         clear 2>/dev/null || true
         if run_image write-otp "$dev"; then
-          msg "OK" "OTP enabler en $dev.\nArranca la 3B con este medio ~1 min."
+          msg "OK" "OTP enabler on $dev.\nBoot the 3B with this media ~1 min."
         else
-          msg "Error" "Falló write-otp."
+          msg "Error" "write-otp failed."
         fi
         ;;
       4)
         local txt
         txt="$(list_candidate_disks | sed 's/|/ · /g')"
-        [ -n "$txt" ] || txt="(ninguno)"
-        msg "Discos" "$txt"
+        [ -n "$txt" ] || txt="(none)"
+        msg "Disks" "$txt"
         ;;
       5)
         clear 2>/dev/null || true
         run_image fetch-base desktop || run_image fetch-base lite
-        msg "Cache" "Imagen en ~/.cache/nabla-image (si no hubo error)."
+        msg "Cache" "Image in ~/.cache/nabla-image (if no error)."
         ;;
       6|"") return 0 ;;
     esac
   done
 }
 
-menu_red() {
+menu_network() {
   while true; do
     local c=""
     if have_wt; then
-      c=$(whiptail --title "$TITLE · Red" --menu "Nabla Net / vpn-mode" 18 72 8 \
-        "1" "Estado" \
+      c=$(whiptail --title "$TITLE · Network" --menu "Nabla Net / vpn-mode" 18 72 8 \
+        "1" "Status" \
         "2" "CABLE (eth LAN + Tailscale)" \
         "3" "AP (SSID Nabla Net)" \
         "4" "CABLE-AP (eth + wlan1 AP)" \
         "5" "OFF" \
-        "6" "Volver" \
+        "6" "Back" \
         3>&1 1>&2 2>&3) || return 0
     else
       echo "1 status 2 cable 3 ap 4 cable-ap 5 off 6 back"
@@ -270,13 +270,13 @@ menu_red() {
     case "$c" in
       1)
         local s
-        s="$([ -x "$VPN_BIN" ] && "$VPN_BIN" status 2>&1 || echo 'sin vpn-mode')"
-        msg "Estado red" "Host: $(hostname)\n\n$s"
+        s="$([ -x "$VPN_BIN" ] && "$VPN_BIN" status 2>&1 || echo 'vpn-mode not found')"
+        msg "Network status" "Host: $(hostname)\n\n$s"
         ;;
-      2) clear; run_vpn cable; msg "Red" "Modo CABLE." ;;
-      3) clear; run_vpn ap; msg "Red" "Modo AP." ;;
-      4) clear; run_vpn cable-ap; msg "Red" "Modo CABLE-AP." ;;
-      5) clear; run_vpn off; msg "Red" "OFF." ;;
+      2) clear; run_vpn cable; msg "Network" "Mode: CABLE." ;;
+      3) clear; run_vpn ap; msg "Network" "Mode: AP." ;;
+      4) clear; run_vpn cable-ap; msg "Network" "Mode: CABLE-AP." ;;
+      5) clear; run_vpn off; msg "Network" "OFF." ;;
       6|"") return 0 ;;
     esac
   done
@@ -328,7 +328,7 @@ acc_summary() {
   printf '\nConfig: %s\n' "$ACC_CONF"
 }
 
-menu_accesorios() {
+menu_accessories() {
   while true; do
     acc_load
     local c="" oled_l rot_l big_l
@@ -336,17 +336,17 @@ menu_accesorios() {
     rot_l=$(acc_label "$ROTARY")
     big_l=$(acc_label "$DISPLAY_LARGE")
     if have_wt; then
-      c=$(whiptail --title "$TITLE · Accesorios" --menu \
-        "Perfil de hardware de esta Pi / imagen.\nMarca lo que lleva (o llevará) montado." 20 74 10 \
-        "1" "Pantalla pequeña I2C OLED  [$oled_l]" \
-        "2" "Encoder rotativo (EC11)    [$rot_l]" \
-        "3" "Pantalla grande SPI        [$big_l]" \
-        "4" "Aplicar OLED ahora (si ON)" \
-        "5" "Ver perfil" \
-        "6" "Volver" \
+      c=$(whiptail --title "$TITLE · Accessories" --menu \
+        "Hardware profile for this Pi / image.\nMark what is (or will be) attached." 20 74 10 \
+        "1" "Small I2C OLED display     [$oled_l]" \
+        "2" "Rotary encoder (EC11)      [$rot_l]" \
+        "3" "Large SPI display          [$big_l]" \
+        "4" "Apply OLED now (if ON)" \
+        "5" "View profile" \
+        "6" "Back" \
         3>&1 1>&2 2>&3) || return 0
     else
-      echo "Accesorios: 1 OLED[$oled_l] 2 rotary[$rot_l] 3 large[$big_l] 4 apply-oled 5 show 6 back"
+      echo "Accessories: 1 OLED[$oled_l] 2 rotary[$rot_l] 3 large[$big_l] 4 apply-oled 5 show 6 back"
       read -r -p "> " c
     fi
     case "$c" in
@@ -354,32 +354,32 @@ menu_accesorios() {
         DISPLAY_OLED=$(acc_toggle "$DISPLAY_OLED")
         acc_save "$DISPLAY_OLED" "$ROTARY" "$DISPLAY_LARGE"
         if [ "$DISPLAY_OLED" = "1" ]; then
-          msg "Accesorios" "OLED I2C: ON\nPines tipicos: SDA=GPIO2 SCL=GPIO3 VCC 3.3V GND"
+          msg "Accessories" "OLED I2C: ON\nTypical pins: SDA=GPIO2 SCL=GPIO3 VCC 3.3V GND"
         else
-          msg "Accesorios" "OLED I2C: OFF"
+          msg "Accessories" "OLED I2C: OFF"
         fi
         ;;
       2)
         ROTARY=$(acc_toggle "$ROTARY")
         acc_save "$DISPLAY_OLED" "$ROTARY" "$DISPLAY_LARGE"
         if [ "$ROTARY" = "1" ]; then
-          msg "Accesorios" "Rotativo: ON\nEC11: A/B + switch a GPIO (pull-ups). Detalle en AGENTS.md."
+          msg "Accessories" "Rotary encoder: ON\nEC11: A/B + switch to GPIO (pull-ups). See AGENTS.md."
         else
-          msg "Accesorios" "Rotativo: OFF"
+          msg "Accessories" "Rotary encoder: OFF"
         fi
         ;;
       3)
         DISPLAY_LARGE=$(acc_toggle "$DISPLAY_LARGE")
         acc_save "$DISPLAY_OLED" "$ROTARY" "$DISPLAY_LARGE"
         if [ "$DISPLAY_LARGE" = "1" ]; then
-          msg "Accesorios" "Pantalla grande SPI: ON\nPerfil SPI TFT (kiosko). Driver/pines: docs Edge."
+          msg "Accessories" "Large SPI display: ON\nSPI TFT profile (kiosk). Driver/pins: see Edge docs."
         else
-          msg "Accesorios" "Pantalla grande SPI: OFF"
+          msg "Accessories" "Large SPI display: OFF"
         fi
         ;;
       4)
         if [ "${DISPLAY_OLED:-0}" != "1" ]; then
-          if ask_yes "OLED" "El perfil tiene OLED=OFF. ¿Activarlo y aplicar servicio?"; then
+          if ask_yes "OLED" "Profile has OLED=OFF. Enable and apply service?"; then
             DISPLAY_OLED=1
             acc_save "$DISPLAY_OLED" "$ROTARY" "$DISPLAY_LARGE"
           else
@@ -389,7 +389,7 @@ menu_accesorios() {
         enable_oled
         ;;
       5)
-        msg "Perfil accesorios" "$(acc_summary)"
+        msg "Accessories profile" "$(acc_summary)"
         ;;
       6|"") return 0 ;;
     esac
@@ -406,7 +406,7 @@ enable_camera() {
   if [ -x "$nn" ]; then
     "$nn" camera
   else
-    msg "Cámara" "Instala nabla-net / Edge para go2rtc."
+    msg "Camera" "Install nabla-net / Edge for go2rtc."
   fi
 }
 
@@ -418,17 +418,17 @@ enable_oled() {
   [ -x "$en" ] || en="$REAL_HOME/bin/nabla-oled-enable"
   [ -x "$en" ] || en="/usr/local/bin/nabla-oled-enable"
   if [ ! -x "$en" ]; then
-    msg "OLED" "No encuentro nabla-oled-enable.\nReinstala Nabla Edge."
+    msg "OLED" "Cannot find nabla-oled-enable.\nReinstall Nabla Edge."
     return 1
   fi
-  if ! ask_yes "OLED I2C" "¿Activar pantallita I2C (SSD1306)?\n\nPines: VCC 3.3V, GND, SDA=GPIO2, SCL=GPIO3\nMuestra: ∇ + nabla.net + hora\n\nPuede pedir reinicio si I2C no estaba activo."; then
+  if ! ask_yes "OLED I2C" "Enable I2C OLED (SSD1306)?\n\nPins: VCC 3.3V, GND, SDA=GPIO2, SCL=GPIO3\nShows: ∇ + nabla.net + time\n\nMay require reboot if I2C was not active."; then
     return 0
   fi
   clear 2>/dev/null || true
   if "$en"; then
-    msg "OLED" "Servicio nabla-oled activado.\nSi no ves nada: revisa cables y reinicia si pidió I2C."
+    msg "OLED" "nabla-oled service enabled.\nIf nothing shows: check wires and reboot if I2C was requested."
   else
-    msg "OLED" "Falló la activación. Mira la terminal."
+    msg "OLED" "Activation failed. Check terminal."
   fi
 }
 
@@ -509,21 +509,21 @@ voice_status() {
   voice_load
   local mode_label
   case "$VOICE_MODE" in
-    button) mode_label="HTTP + GPIO opcional" ;;
-    wake) mode_label="Wake word local" ;;
+    button) mode_label="HTTP + optional GPIO" ;;
+    wake) mode_label="Local wake word" ;;
     *) mode_label="$VOICE_MODE" ;;
   esac
   
-  printf 'Modo:            %s\n' "$mode_label"
-  printf 'Nombre:          %s\n' "$VOICE_NAME"
-  printf 'Puerto Wyoming:  %s\n' "$VOICE_PORT"
-  printf 'Puerto HTTP:     %s\n' "$VOICE_HTTP_PORT"
-  printf '\nServicios:\n'
+  printf 'Mode:            %s\n' "$mode_label"
+  printf 'Name:            %s\n' "$VOICE_NAME"
+  printf 'Wyoming port:    %s\n' "$VOICE_PORT"
+  printf 'HTTP port:       %s\n' "$VOICE_HTTP_PORT"
+  printf '\nServices:\n'
   printf '  Satellite:     %s\n' "$sat_active"
-  printf '  HTTP listen:   %s  (trigger principal)\n' "$listen_active"
+  printf '  HTTP listen:   %s  (primary trigger)\n' "$listen_active"
   if [ "$VOICE_MODE" = "button" ]; then
-    printf '  GPIO PTT:      %s  (secundario opcional)\n' "$ptt_active"
-    printf '\nGPIO botón:      %s\n' "$VOICE_GPIO"
+    printf '  GPIO PTT:      %s  (optional secondary)\n' "$ptt_active"
+    printf '\nGPIO button:     %s\n' "$VOICE_GPIO"
   else
     printf '  Wake word:     %s\n' "$VOICE_WAKE_WORD"
   fi
@@ -538,22 +538,22 @@ voice_install() {
     [ -f "$alt" ] && VOICE_INSTALLER="$alt"
   fi
   if [ ! -f "$VOICE_INSTALLER" ]; then
-    msg "Voz" "No encuentro el instalador:\n$VOICE_INSTALLER\n\nReinstala Nabla Edge."
+    msg "Voice" "Cannot find installer:\n$VOICE_INSTALLER\n\nReinstall Nabla Edge."
     return 1
   fi
   
   voice_load
   
-  if ! ask_yes "Instalar satélite" \
-    "Instalar Wyoming satellite para Home Assistant Assist.\n\nModo: $VOICE_MODE\nNombre: $VOICE_NAME\nPuerto: $VOICE_PORT\n\nRequiere Python 3, pip, ALSA.\n¿Continuar?"; then
+  if ! ask_yes "Install satellite" \
+    "Install Wyoming satellite for Home Assistant Assist.\n\nMode: $VOICE_MODE\nName: $VOICE_NAME\nPort: $VOICE_PORT\n\nRequires Python 3, pip, ALSA.\nContinue?"; then
     return 0
   fi
   
   clear 2>/dev/null || true
   if "$VOICE_INSTALLER" --mode "$VOICE_MODE" --name "$VOICE_NAME" --port "$VOICE_PORT"; then
-    msg "Voz" "Satélite instalado.\n\nPróximos pasos:\n1. Inicia servicios (opción 6)\n2. En HA: Wyoming → host:$VOICE_PORT\n3. Añade botón 'Escuchar' en dashboard\n   (ver opción 9: Instrucciones HA)\n\nEl botón del dashboard es el trigger principal.\nGPIO es secundario opcional."
+    msg "Voice" "Satellite installed.\n\nNext steps:\n1. Start services (option 6)\n2. In HA: Wyoming → host:$VOICE_PORT\n3. Add 'Listen' button to dashboard\n   (see option 9: HA Instructions)\n\nDashboard button is the primary trigger.\nGPIO is optional secondary."
   else
-    msg "Voz" "Falló la instalación. Revisa terminal / logs."
+    msg "Voice" "Installation failed. Check terminal / logs."
   fi
 }
 
@@ -570,7 +570,7 @@ voice_start() {
     systemctl --user start nabla-voice-listen.service 2>/dev/null || true
   
   voice_load
-  msg "Voz" "Servicios iniciados.\n\nSatellite: $(sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user is-active wyoming-satellite 2>/dev/null || echo '?')\nHTTP listen: $(sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user is-active nabla-voice-listen 2>/dev/null || echo '?')\n\nGPIO PTT (opcional): systemctl --user start nabla-voice-ptt"
+  msg "Voice" "Services started.\n\nSatellite: $(sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user is-active wyoming-satellite 2>/dev/null || echo '?')\nHTTP listen: $(sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user is-active nabla-voice-listen 2>/dev/null || echo '?')\n\nGPIO PTT (optional): systemctl --user start nabla-voice-ptt"
 }
 
 voice_stop() {
@@ -585,46 +585,46 @@ voice_stop() {
   sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
     systemctl --user stop nabla-voice-ptt.service 2>/dev/null || true
   
-  msg "Voz" "Servicios detenidos."
+  msg "Voice" "Services stopped."
 }
 
 voice_ha_instructions() {
   voice_load
   local ip_hint
   ip_hint="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  [ -z "$ip_hint" ] && ip_hint="<IP-de-esta-Pi>"
+  [ -z "$ip_hint" ] && ip_hint="<this-Pi-IP>"
   
-  msg "Configuración HA (1/2)" "PASO 1: Añadir el satélite\n\n1. Settings → Devices & Services\n2. Add Integration → Wyoming\n3. Host: $ip_hint\n   Port: $VOICE_PORT\n\nRequisitos en HA:\n• Add-on Whisper (STT)\n• Add-on Piper (TTS)\n• Assist pipeline configurado\n\nEl satélite aparece como:\n  assist_satellite.$VOICE_NAME"
+  msg "HA Setup (1/2)" "STEP 1: Add the satellite\n\n1. Settings → Devices & Services\n2. Add Integration → Wyoming\n3. Host: $ip_hint\n   Port: $VOICE_PORT\n\nHA prerequisites:\n• Whisper add-on (STT)\n• Piper add-on (TTS)\n• Assist pipeline configured\n\nSatellite appears as:\n  assist_satellite.$VOICE_NAME"
   
-  msg "Configuración HA (2/2)" "PASO 2: Botón 'Escuchar' en dashboard\n(trigger principal desde el móvil)\n\nEn configuration.yaml:\n\nrest_command:\n  voice_satellite_listen:\n    url: http://$ip_hint:$VOICE_HTTP_PORT/listen\n    method: POST\n\nReinicia HA, luego añade botón:\n\ntype: button\nname: Escuchar\nicon: mdi:microphone\ntap_action:\n  action: call-service\n  service: rest_command.voice_satellite_listen\n\nAhora desde el móvil: toca el botón → la Pi escucha."
+  msg "HA Setup (2/2)" "STEP 2: 'Listen' button on dashboard\n(primary trigger from phone)\n\nIn configuration.yaml:\n\nrest_command:\n  voice_satellite_listen:\n    url: http://$ip_hint:$VOICE_HTTP_PORT/listen\n    method: POST\n\nRestart HA, then add button:\n\ntype: button\nname: Listen\nicon: mdi:microphone\ntap_action:\n  action: call-service\n  service: rest_command.voice_satellite_listen\n\nNow from phone: tap button → Pi listens."
 }
 
-menu_voz() {
+menu_voice() {
   while true; do
     voice_load
     local c="" mode_l
     case "$VOICE_MODE" in
-      button) mode_l="Botón GPIO" ;;
+      button) mode_l="GPIO Button" ;;
       wake) mode_l="Wake word" ;;
       *) mode_l="$VOICE_MODE" ;;
     esac
     
     if have_wt; then
-      c=$(whiptail --title "$TITLE · Satélite de Voz" --menu \
-        "Wyoming satellite para Home Assistant Assist.\nPi montada en pared: trigger principal desde el móvil (botón HA).\nGPIO es secundario opcional." 24 78 12 \
-        "1" "Instalar / reinstalar satélite" \
-        "2" "Modo: $mode_l  [cambiar]" \
-        "3" "Nombre satélite: $VOICE_NAME  [cambiar]" \
-        "4" "Puerto Wyoming: $VOICE_PORT  [cambiar]" \
-        "5" "GPIO botón (secundario): $VOICE_GPIO  [cambiar]" \
-        "6" "Iniciar servicios" \
-        "7" "Detener servicios" \
-        "8" "Ver estado" \
-        "9" "★ Instrucciones HA (botón dashboard)" \
-        "10" "Volver" \
+      c=$(whiptail --title "$TITLE · Voice Satellite" --menu \
+        "Wyoming satellite for Home Assistant Assist.\nWall-mounted Pi: primary trigger from phone (HA button).\nGPIO is optional secondary." 24 78 12 \
+        "1" "Install / reinstall satellite" \
+        "2" "Mode: $mode_l  [change]" \
+        "3" "Satellite name: $VOICE_NAME  [change]" \
+        "4" "Wyoming port: $VOICE_PORT  [change]" \
+        "5" "GPIO button (secondary): $VOICE_GPIO  [change]" \
+        "6" "Start services" \
+        "7" "Stop services" \
+        "8" "View status" \
+        "9" "★ HA Instructions (dashboard button)" \
+        "10" "Back" \
         3>&1 1>&2 2>&3) || return 0
     else
-      echo "Voz: 1 install 2 mode[$mode_l] 3 name[$VOICE_NAME] 4 port[$VOICE_PORT] 5 gpio[$VOICE_GPIO] 6 start 7 stop 8 status 9 HA-help 10 back"
+      echo "Voice: 1 install 2 mode[$mode_l] 3 name[$VOICE_NAME] 4 port[$VOICE_PORT] 5 gpio[$VOICE_GPIO] 6 start 7 stop 8 status 9 HA-help 10 back"
       read -r -p "> " c
     fi
     
@@ -634,37 +634,37 @@ menu_voz() {
         if [ "$VOICE_MODE" = "button" ]; then
           VOICE_MODE="wake"
           voice_save
-          msg "Voz" "Modo: Wake word local (solo desktop).\n\nNecesitas Docker con rhasspy/wyoming-openwakeword\nen 127.0.0.1:10400.\n\nPara Pi, recomendamos modo HTTP (botón HA)."
+          msg "Voice" "Mode: Local wake word (desktop only).\n\nRequires Docker with rhasspy/wyoming-openwakeword\non 127.0.0.1:10400.\n\nFor Pi, HTTP mode (HA button) is recommended."
         else
           VOICE_MODE="button"
           voice_save
-          msg "Voz" "Modo: HTTP trigger + GPIO opcional.\n\nTrigger principal: botón en dashboard HA (móvil).\nGPIO secundario: pulsador entre GPIO$VOICE_GPIO y GND."
+          msg "Voice" "Mode: HTTP trigger + optional GPIO.\n\nPrimary trigger: button on HA dashboard (phone).\nSecondary GPIO: button between GPIO$VOICE_GPIO and GND."
         fi
         ;;
       3)
         local new_name
-        new_name="$(ask_input "Nombre" "Nombre del satélite (aparece en HA):" "$VOICE_NAME")" || continue
+        new_name="$(ask_input "Name" "Satellite name (appears in HA):" "$VOICE_NAME")" || continue
         [ -n "$new_name" ] && VOICE_NAME="$new_name"
         voice_save
-        msg "Voz" "Nombre: $VOICE_NAME\n\nEn HA aparecerá como: assist_satellite.$VOICE_NAME"
+        msg "Voice" "Name: $VOICE_NAME\n\nIn HA appears as: assist_satellite.$VOICE_NAME"
         ;;
       4)
         local new_port
-        new_port="$(ask_input "Puerto" "Puerto Wyoming (default 10700):" "$VOICE_PORT")" || continue
+        new_port="$(ask_input "Port" "Wyoming port (default 10700):" "$VOICE_PORT")" || continue
         [[ "$new_port" =~ ^[0-9]+$ ]] && VOICE_PORT="$new_port"
         voice_save
-        msg "Voz" "Puerto: $VOICE_PORT"
+        msg "Voice" "Port: $VOICE_PORT"
         ;;
       5)
         local new_gpio
-        new_gpio="$(ask_input "GPIO" "Pin GPIO del botón (BCM, ej: 17, 27, 22):" "$VOICE_GPIO")" || continue
+        new_gpio="$(ask_input "GPIO" "Button GPIO pin (BCM, e.g.: 17, 27, 22):" "$VOICE_GPIO")" || continue
         [[ "$new_gpio" =~ ^[0-9]+$ ]] && VOICE_GPIO="$new_gpio"
         voice_save
-        msg "Voz" "GPIO botón: $VOICE_GPIO\n\nConecta pulsador entre GPIO$VOICE_GPIO y GND (pull-up interno)."
+        msg "Voice" "GPIO button: $VOICE_GPIO\n\nConnect button between GPIO$VOICE_GPIO and GND (internal pull-up)."
         ;;
       6) voice_start ;;
       7) voice_stop ;;
-      8) msg "Estado satélite voz" "$(voice_status)" ;;
+      8) msg "Voice satellite status" "$(voice_status)" ;;
       9) voice_ha_instructions ;;
       10|"") return 0 ;;
     esac
@@ -672,34 +672,33 @@ menu_voz() {
 }
 
 cmd_info() {
-  msg "Info" "Nabla Config $VERSION\n\n• Red: cable / AP / cable-ap / off\n• Medios: Nabla Pi OS o OTP\n• Al enchufar USB: diálogo (OS / OTP / abrir)\n• Accesorios: OLED / rotativo / SPI
-• Cámara / voz\n\nRepo: \\\\coco\\nabla.net\\packages"
+  msg "Info" "Nabla Config $VERSION\n\n• Network: cable / AP / cable-ap / off\n• Media: Nabla Pi OS or OTP\n• USB hotplug: dialog (OS / OTP / open)\n• Accessories: OLED / rotary / SPI\n• Camera / voice\n\nRepo: \\\\coco\\nabla.net\\packages"
 }
 
 menu() {
   while true; do
     local c=""
     if have_wt; then
-      c=$(whiptail --title "$TITLE" --menu "Panel Nabla Edge" 20 72 11 \
-        "1" "Red (Nabla Net / vpn-mode)" \
-        "2" "Medios USB/SD (OS / OTP)" \
-        "3" "Accesorios (OLED / rotativo / SPI)" \
-        "4" "Cámara go2rtc" \
-        "5" "Satélite de voz" \
+      c=$(whiptail --title "$TITLE" --menu "Nabla Edge Panel" 20 72 11 \
+        "1" "Network (Nabla Net / vpn-mode)" \
+        "2" "Media USB/SD (OS / OTP)" \
+        "3" "Accessories (OLED / rotary / SPI)" \
+        "4" "Camera go2rtc" \
+        "5" "Voice Satellite" \
         "6" "Info" \
-        "7" "Salir" \
+        "7" "Exit" \
         3>&1 1>&2 2>&3) || return 0
     else
       echo "===== $TITLE ====="
-      echo "1 Red  2 Medios  3 Accesorios  4 Cámara  5 Voz  6 Info  7 Salir"
+      echo "1 Network  2 Media  3 Accessories  4 Camera  5 Voice  6 Info  7 Exit"
       read -r -p "> " c
     fi
     case "$c" in
-      1) menu_red ;;
-      2) menu_medios ;;
-      3) menu_accesorios ;;
+      1) menu_network ;;
+      2) menu_media ;;
+      3) menu_accessories ;;
       4) enable_camera ;;
-      5) menu_voz ;;
+      5) menu_voice ;;
       6) cmd_info ;;
       7|"") return 0 ;;
     esac
@@ -716,7 +715,7 @@ NAME
 
 SYNOPSIS
     sudo nabla-config
-    sudo nabla-config red|medios|accesorios|oled
+    sudo nabla-config network|media|accessories|oled|voice
     nabla-config --help
 
 DESCRIPTION
@@ -725,28 +724,28 @@ DESCRIPTION
     USB/SD, and stores an accessories profile for optional hardware.
 
 MENUS
-    Red
+    Network
         cable, ap, cable-ap, off, status — via vpn-mode / nabla-net.
 
-    Medios
+    Media
         Download Raspberry Pi OS (cached), inject Nabla first-boot, write
         USB/SD; or write a one-shot OTP enabler for Pi 3B USB boot.
 
-    Accesorios
+    Accessories
         Toggle and persist hardware intent under
         /etc/nabla-net/accessories.conf:
           display_oled=0|1     small I2C SSD1306 OLED
           rotary=0|1           EC11 rotary encoder
           display_large=0|1    large SPI TFT / kiosk panel
-        "Aplicar OLED ahora" runs nabla-oled-enable when OLED is ON.
+        "Apply OLED now" runs nabla-oled-enable when OLED is ON.
 
-    Camara
+    Camera
         go2rtc USB camera helper.
 
-    Satélite de Voz
+    Voice Satellite
         Wyoming voice satellite for Home Assistant Assist.
         Two modes:
-          button  GPIO push-to-talk (recommended for Pi)
+          button  HTTP + optional GPIO push-to-talk (recommended for Pi)
           wake    Local openWakeWord Docker (desktop/powerful hosts)
         Config: /etc/nabla-edge/voice.conf
 
@@ -764,12 +763,12 @@ SEE ALSO
     nabla-net, nabla-image, vpn-mode, AGENTS.md on \\coco\nabla.net
 H
       ;;
-    medios|media|image) need_root; menu_medios ;;
-    red|net) need_root; menu_red ;;
-    accesorios|accessories|acc) need_root; menu_accesorios ;;
+    media|medios|image) need_root; menu_media ;;
+    network|red|net) need_root; menu_network ;;
+    accessories|accesorios|acc) need_root; menu_accessories ;;
     oled) need_root; enable_oled ;;
-    voz|voice) need_root; menu_voz ;;
-    *) echo "Usa: sudo nabla-config"; exit 1 ;;
+    voice|voz) need_root; menu_voice ;;
+    *) echo "Usage: sudo nabla-config"; exit 1 ;;
   esac
 }
 

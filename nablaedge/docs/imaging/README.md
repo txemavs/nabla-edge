@@ -6,11 +6,11 @@ How to create bootable SD/USB media with NablaEdge first-boot injection.
 
 ## Overview
 
-`nabla-image` prepares Raspberry Pi boot media:
+`nabla-image` (called from `nabla-config` → Medios) prepares Raspberry Pi boot media:
 
 1. Fetches Raspberry Pi OS image
-2. Injects first-boot scripts and edge packages
-3. Writes to SD card or USB drive
+2. Writes to SD card or USB drive
+3. Injects first-boot scripts and edge packages
 4. Optionally enables OTP USB boot for Pi 3B
 
 ---
@@ -48,6 +48,91 @@ flowchart TD
 
 ---
 
+## First-Boot Package Installation
+
+The first-boot sequence installs NablaEdge on the new Pi. There are two approaches:
+
+### Current Method (Tarball)
+
+Today, imaged media includes a tarball on the boot partition:
+
+```
+/boot/nabla-edge.tar.gz
+```
+
+The first-boot script extracts and runs `install.sh`:
+
+```bash
+# In /boot/firstboot.d/04-install-packages.sh (current)
+cd /boot
+tar xzf nabla-edge.tar.gz
+cd nabla-edge && ./install.sh
+```
+
+The tarball is fetched during imaging from:
+
+```
+https://coco.nabla.net/nabla.net/pkgs/nabla-edge.tar.gz
+```
+
+### Target Method (APT-First)
+
+Future imaging will prefer APT installation with fallbacks:
+
+```mermaid
+flowchart TD
+    Boot[First Boot] --> Network{Network available?}
+    Network -->|Yes| APT[Add APT source + apt install nabla-edge]
+    Network -->|No| LocalDeb{Local .deb on boot partition?}
+    APT --> Done[Setup complete]
+    LocalDeb -->|Yes| Dpkg[dpkg -i nabla-edge.deb]
+    LocalDeb -->|No| Tarball{Tarball on boot partition?}
+    Dpkg --> Done
+    Tarball -->|Yes| Extract[Extract + install.sh]
+    Tarball -->|No| Fail[Fail - no install source]
+    Extract --> Done
+```
+
+Target first-boot logic (pseudocode):
+
+```bash
+# In /boot/firstboot.d/04-install-packages.sh (target)
+
+# Try APT first (requires network)
+if ping -c1 coco.nabla.net &>/dev/null; then
+    echo 'deb [trusted=yes] https://coco.nabla.net/apt/ stable main' > \
+        /etc/apt/sources.list.d/nabla.list
+    apt update && apt install -y nabla-edge
+    exit 0
+fi
+
+# Fallback: local .deb on boot partition
+if [ -f /boot/nabla-edge*.deb ]; then
+    dpkg -i /boot/nabla-edge*.deb
+    exit 0
+fi
+
+# Fallback: tarball (legacy)
+if [ -f /boot/nabla-edge.tar.gz ]; then
+    cd /boot && tar xzf nabla-edge.tar.gz
+    cd nabla-edge && ./install.sh
+    exit 0
+fi
+
+echo "ERROR: No install source found"
+exit 1
+```
+
+### Migration Note
+
+**Important**: To get the new APT-first first-boot behavior, existing imaging Pis must be upgraded. Newly imaged media inherits the first-boot scripts from the Pi that created them.
+
+Upgrade path:
+1. Update `nabla-edge` package on the imaging Pi via APT
+2. New media written by that Pi will have the APT-first first-boot scripts
+
+---
+
 ## What Gets Injected
 
 ### First-Boot Scripts
@@ -59,7 +144,7 @@ Placed in `/boot/firstboot.d/`:
 ├── 01-expand-filesystem.sh
 ├── 02-set-hostname.sh
 ├── 03-configure-network.sh
-├── 04-install-packages.sh
+├── 04-install-packages.sh    ← Package installation
 └── 05-start-services.sh
 ```
 
@@ -67,14 +152,13 @@ These run once on first boot, then self-delete.
 
 ### Edge Packages
 
-Pre-staged in `/var/cache/apt/archives/`:
+Depending on the method:
 
-- `nabla-edge` — Core edge system
-- `nabla-net` — Network management
-- `nabla-oled` — OLED display service
-- `nabla-config` — Configuration tool
-
-First-boot script runs `dpkg -i` to install.
+| Method | Location |
+|--------|----------|
+| Tarball (current) | `/boot/nabla-edge.tar.gz` |
+| Local .deb (fallback) | `/boot/nabla-edge_*.deb` |
+| APT (target) | Downloaded from `https://coco.nabla.net/apt/` |
 
 ### Configuration Files
 
@@ -86,24 +170,6 @@ Placed in `/boot/nabla/`:
 ├── network.conf        # Initial network mode
 └── accessories.conf    # Hardware flags
 ```
-
----
-
-## Package Source
-
-Packages are fetched from a central HTTP mirror (not stored in this repo):
-
-```
-https://apt.example.local/nabla/pool/main/
-```
-
-Or from local file mirror:
-
-```
-file:///path/to/mirror/pool/main/
-```
-
-**Note**: Replace `example.local` with your actual mirror. See [../packages-apt/](../packages-apt/) for setting up a mirror.
 
 ---
 
@@ -166,7 +232,6 @@ OPTIONS:
   --target DEVICE         Target device (e.g., /dev/sdb)
   --site NAME             Site identifier (default: demo)
   --image URL             Custom image URL (default: latest Pi OS)
-  --mirror URL            Package mirror URL
   --enable-otp            Enable USB boot OTP on Pi 3B
   --dry-run               Show what would be done
   --verify                Verify write after completion
@@ -227,6 +292,16 @@ Check `/boot/firstboot.d/` exists and scripts are executable:
 ls -la /boot/firstboot.d/
 ```
 
+### First-boot APT install fails
+
+If network isn't available at first-boot, the APT method will fail and fall back to local .deb or tarball. To debug:
+
+```bash
+# Check firstboot logs
+journalctl -u firstboot
+cat /var/log/firstboot.log
+```
+
 ---
 
 ## How to Change This
@@ -240,6 +315,6 @@ ls -la /boot/firstboot.d/
 
 ## Related
 
-- [../packages-apt/](../packages-apt/) — Package repository setup
+- [../packages-apt/](../packages-apt/) — APT repository and tarball install
 - [../pi-config-menu/](../pi-config-menu/) — Post-boot configuration
 - [../network-modes/](../network-modes/) — Network setup after boot

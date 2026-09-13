@@ -4,6 +4,20 @@ The `nabla-config` tool: a whiptail-based configuration menu for Raspberry Pi ed
 
 ---
 
+## Installation
+
+`nabla-config` is part of the `nabla-edge` package. Install via APT:
+
+```bash
+echo 'deb [trusted=yes] https://coco.nabla.net/apt/ stable main' | \
+  sudo tee /etc/apt/sources.list.d/nabla.list
+sudo apt update && sudo apt install nabla-edge
+```
+
+See [../packages-apt/](../packages-apt/) for full installation details.
+
+---
+
 ## What is nabla-config?
 
 `nabla-config` is an interactive terminal menu (using whiptail/dialog) that configures:

@@ -1,0 +1,51 @@
+# Secrets and credentials
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+secrets.yaml
+*_secrets.yaml
+credentials.json
+service_account.json
+
+# Build artifacts and caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+.npm/
+*.egg-info/
+build/
+*.o
+*.so
+*.a
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ESPHome
+.esphome/
+*.elf
+*.bin
+firmware/
+
+# Large binaries (use Releases)
+*.deb
+*.tar.gz
+*.tar.xz
+*.zip
+
+# Logs
+*.log
+logs/

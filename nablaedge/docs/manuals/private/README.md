@@ -1,13 +1,49 @@
-# Private PDFs (do not commit)
+# Private PDFs — NAS Only
 
-These stay on the private docs share until scrubbed:
+Index of private PDFs that contain sensitive data and must **not** be committed to git.
 
-| File | Why private |
-|------|-------------|
-| nabla-edge.pdf | Site names / deployment pitch |
-| nabla-infraestructura-privada-global.pdf | Site names |
-| nabla-home-assistant-voz.pdf | Site-specific voice pitch |
-| nabla-edge-veronica-esp32.pdf | Internal agent/ops pitch |
-| nabla-net-informe-ingenieria.pdf | Needs heavy scrub (real topology) before any public cut |
+---
 
-Duplicate `nabla-home-assistant-voz (1).pdf` = same as voice PDF — ignore.
+## Location
+
+These files exist on the private NAS only:
+
+```
+/nas/docs/nabla/private/
+```
+
+---
+
+## Private PDF Index
+
+| Filename | Content | Why Private |
+|----------|---------|-------------|
+| `nabla-edge.pdf` | Main edge documentation | Real hostnames, IPs |
+| `nabla-infraestructura-privada-global.pdf` | Global infrastructure | Full network topology |
+| `nabla-home-assistant-voz.pdf` | Voice satellite setup | HA instance URLs |
+| `nabla-edge-veronica-esp32.pdf` | ESP32 device docs | Real device names |
+| `nabla-net-informe-ingenieria.pdf` | Engineering report | Private network details |
+
+---
+
+## Can These Become Public?
+
+Some may be sanitized for public release:
+
+| PDF | Sanitization Effort |
+|-----|---------------------|
+| `nabla-edge.pdf` | High — many real values throughout |
+| `nabla-infraestructura-privada-global.pdf` | Not feasible — core content is private |
+| `nabla-home-assistant-voz.pdf` | Medium — replace HA URLs, device paths |
+| `nabla-edge-veronica-esp32.pdf` | Medium — replace device names |
+| `nabla-net-informe-ingenieria.pdf` | High — extensive network details |
+
+See [../README.md](../README.md) for the sanitization process.
+
+---
+
+## Rule
+
+**Never commit binaries from this list to git.**
+
+If you need content from these PDFs in public docs, extract and sanitize the relevant sections manually.

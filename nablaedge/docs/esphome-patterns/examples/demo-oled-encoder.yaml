@@ -1,0 +1,51 @@
+# FICTIONAL teaching skeleton — not a production device.
+# Shows structure only; fill pins/secrets locally.
+
+substitutions:
+  device_name: demo-oled-encoder
+  project_version: "0.0.0-demo"
+
+esphome:
+  name: ${device_name}
+  friendly_name: Demo OLED Encoder
+
+esp32:
+  board: esp32dev
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+mqtt:
+  broker: !secret mqtt_host
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  topic_prefix: nabla/esp/${device_name}
+
+# Example SPI OLED (adjust CS/DC/RST to your wiring)
+# display:
+#   - platform: ssd1306_spi
+#     model: SSD1306_128X64
+#     cs_pin: GPIOXX
+#     dc_pin: GPIOXX
+#     reset_pin: GPIOXX
+#     rotation: 180
+#     lambda: |-
+#       // Draw menu_level / menu_idx list + caret (see ui/ssd 128x64 profile)
+#       // Prefer nabla.menu MQTT JSON over hard-coded labels long-term.
+
+sensor:
+  - platform: rotary_encoder
+    name: Encoder
+    pin_a: GPIOXX
+    pin_b: GPIOXX
+    # on_value: update menu_idx
+
+binary_sensor:
+  - platform: gpio
+    name: Encoder SW
+    pin:
+      number: GPIOXX
+      mode: INPUT_PULLUP
+      inverted: true
+    # on_press: select / enter submenu

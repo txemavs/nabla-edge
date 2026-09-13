@@ -13,6 +13,7 @@ Learning-oriented documentation for the NablaEdge system. Each folder covers one
 | [network-modes/](network-modes/) | Nabla Net modes: cable, ap, cable-ap, off |
 | [imaging/](imaging/) | `nabla-image`: create bootable SD/USB with first-boot injection |
 | [accessories/](accessories/) | Hardware: OLED, rotary, large SPI + OLED UI paint layer |
+| [esphome-patterns/](esphome-patterns/) | How to build OLED+encoder / BLE mounts (no private fleet YAML) |
 | [ble-mesh/](ble-mesh/) | BLE presence/contagion mesh protocol |
 | [packages-apt/](packages-apt/) | How apt packages and HTTP publishing work |
 | [voice-satellite/](voice-satellite/) | HA Assist voice satellite (stub) |

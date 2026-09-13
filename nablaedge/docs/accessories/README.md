@@ -1,24 +1,29 @@
 # Accessories
 
-Hardware profile toggled from `nabla-config` → Accesorios:
+Hardware you can declare on an Edge node (and similar mounts on ESP32).
 
-- `display_oled` — small I2C SSD1306
-- `rotary` — EC11 / KY-040
-- `display_large` — SPI TFT (ILI9341 / ST7789)
+## Profile flags (`nabla-config` → Accesorios)
 
-Config file shape: `/etc/nabla-net/accessories.conf`.
+Written to `/etc/nabla-net/accessories.conf`:
 
-## Subfolders
+```bash
+display_oled=0|1
+rotary=0|1
+display_large=0|1
+```
 
-- [oled-ui/](oled-ui/) — shared 128×64 paint (links to `ui/ssd`)
-- [pdf/](pdf/) — pin lists, mounting diagram, case stickers
+## OLED I2C wiring
 
-## Public PDFs
+![Pi](diagrams/oled-i2c-raspberry-pi.jpg)
 
-| File | Notes |
-|------|--------|
-| [pdf/nabla-accesorios-lista-y-pines.pdf](pdf/nabla-accesorios-lista-y-pines.pdf) | Accessory → GPIO / physical pin |
-| [pdf/nabla-edge-esquema-pinout.pdf](pdf/nabla-edge-esquema-pinout.pdf) | Mounting overview |
-| [pdf/nabla-pegatinas-accesorios.pdf](pdf/nabla-pegatinas-accesorios.pdf) | Sticker sheet (generic) |
-| [pdf/nabla-pegatinas-pi4.pdf](pdf/nabla-pegatinas-pi4.pdf) | Pi 4 case labels |
-| [pdf/nabla-pegatinas-zero.pdf](pdf/nabla-pegatinas-zero.pdf) | Zero / W labels |
+![ESP32](diagrams/oled-i2c-esp32.jpg)
+
+Paint/layout tokens: [`oled-ui/`](oled-ui/) → [`../../ui/ssd/`](../../ui/ssd/).
+
+## Rotary + screen (software pattern)
+
+How a **menu device** behaves (ESPHome-style) is documented under [`../esphome-patterns/`](../esphome-patterns/) — teaching patterns, not private fleet YAML.
+
+## PDFs
+
+Pin lists and case stickers: [`pdf/`](pdf/).

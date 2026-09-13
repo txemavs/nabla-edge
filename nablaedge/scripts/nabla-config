@@ -1,0 +1,544 @@
+#!/bin/bash
+# nabla-config — panel ncurses Nabla Edge (red + medios USB/SD)
+# Uso: sudo nabla-config
+set -euo pipefail
+
+VERSION="0.7.0"
+OWNER="${SUDO_USER:-$USER}"
+REAL_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
+REAL_HOME="${REAL_HOME:-$HOME}"
+VPN_BIN="$(command -v vpn-mode 2>/dev/null || true)"
+[ -x "$VPN_BIN" ] || VPN_BIN="$REAL_HOME/bin/vpn-mode"
+[ -x "$VPN_BIN" ] || VPN_BIN="/usr/local/bin/vpn-mode"
+IMG_BIN="$(command -v nabla-image 2>/dev/null || true)"
+[ -x "$IMG_BIN" ] || IMG_BIN="$REAL_HOME/bin/nabla-image"
+[ -x "$IMG_BIN" ] || IMG_BIN="/usr/local/bin/nabla-image"
+TITLE="Nabla Config $VERSION"
+
+need_root() {
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Necesita root: sudo nabla-config $*" >&2
+    exit 1
+  fi
+}
+
+have_wt() { command -v whiptail >/dev/null 2>&1; }
+
+msg() {
+  local t="${1:-Nabla}"; shift
+  if have_wt; then
+    whiptail --title "$t" --msgbox "$*" 16 72
+  else
+    echo "==> $t"; echo "$*"; read -r -p "Enter..." _
+  fi
+}
+
+ask_yes() {
+  local t="$1" q="$2"
+  if have_wt; then
+    whiptail --title "$t" --yesno "$q" 12 72
+  else
+    read -r -p "$q [s/N] " a
+    case "$a" in s|S|y|Y) return 0 ;; *) return 1 ;; esac
+  fi
+}
+
+ask_input() {
+  local t="$1" q="$2" def="${3:-}"
+  if have_wt; then
+    whiptail --title "$t" --inputbox "$q" 10 72 "$def" 3>&1 1>&2 2>&3
+  else
+    read -r -p "$q [$def]: " a
+    echo "${a:-$def}"
+  fi
+}
+
+run_vpn() {
+  need_root
+  [ -x "$VPN_BIN" ] || { msg "Error" "No encuentro vpn-mode"; return 1; }
+  "$VPN_BIN" "$@"
+}
+
+run_image() {
+  need_root
+  [ -x "$IMG_BIN" ] || { msg "Error" "No encuentro nabla-image"; return 1; }
+  "$IMG_BIN" "$@"
+}
+
+# --- disk helpers ---
+# Returns candidates as lines: NAME|SIZE|MODEL|LABEL|MOUNT|NOTE
+list_candidate_disks() {
+  local name size model tran typ root_disk label mnt note protected
+  root_disk="$(lsblk -no PKNAME "$(findmnt -n -o SOURCE /)" 2>/dev/null || true)"
+
+  # NAME SIZE TRAN TYPE only — MODEL has spaces and breaks `read`
+  while read -r name size tran typ; do
+    [ "$typ" = disk ] || continue
+    case "$name" in
+      loop*|zram*|ram*|dm-*) continue ;;
+    esac
+    if [ -n "$root_disk" ] && [ "$name" = "$root_disk" ]; then
+      continue
+    fi
+    # skip the Pi's own boot SD/eMMC
+    if [[ "$name" == mmcblk* ]]; then
+      local boot_src boot_pk
+      boot_src="$(findmnt -n -o SOURCE /boot/firmware 2>/dev/null || findmnt -n -o SOURCE /boot 2>/dev/null || true)"
+      boot_pk="$(lsblk -no PKNAME "$boot_src" 2>/dev/null || true)"
+      if [ "$name" = "$boot_pk" ] || [ "$name" = "$root_disk" ]; then
+        continue
+      fi
+    fi
+
+    model="$(lsblk -dn -o MODEL,VENDOR "/dev/$name" 2>/dev/null | sed 's/  */ /g;s/^ //;s/ $//')"
+    model="${model:-?}"
+    label="$(lsblk -ln -o LABEL "/dev/$name" 2>/dev/null | grep -v '^$' | tr '\n' ',' | sed 's/,$//')"
+    mnt="$(lsblk -ln -o MOUNTPOINT "/dev/$name" 2>/dev/null | grep -v '^$' | tr '\n' ',' | sed 's/,$//')"
+    note=""
+    protected=0
+    if echo "$mnt" | grep -q '/mnt/usbdata'; then
+      note="PROTEGIDO usbdata"
+      protected=1
+    elif echo "$label" | grep -qi 'usbdata'; then
+      note="PROTEGIDO label usbdata"
+      protected=1
+    elif [ -n "$mnt" ]; then
+      note="montado:$mnt"
+    else
+      note="libre"
+    fi
+    # Prefer USB; also allow mmc (lectores SD USB a veces salen mmc) y vacío
+    if [ "${tran:-}" = usb ] || [ "${tran:-}" = mmc ] || [ -z "${tran:-}" ]; then
+      echo "${name}|${size}|${model}|${label:-—}|${mnt:-—}|${note}|${protected}"
+    fi
+  done < <(lsblk -dn -o NAME,SIZE,TRAN,TYPE 2>/dev/null)
+}
+
+pick_disk() {
+  local purpose="$1"  # os | otp
+  local lines=() tags=() i=0 line name size model label mnt note prot desc
+  mapfile -t lines < <(list_candidate_disks)
+  if [ "${#lines[@]}" -eq 0 ]; then
+    msg "Medios" "No hay discos USB/SD candidatos.\nEnchufa un pendrive o lector y reintenta.\n(No se listan la SD del sistema ni usbdata.)"
+    return 1
+  fi
+
+  if have_wt; then
+    local args=()
+    for line in "${lines[@]}"; do
+      IFS='|' read -r name size model label mnt note prot <<<"$line"
+      desc="${size} · ${model} · ${note}"
+      [ "$label" != "—" ] && [ -n "$label" ] && desc="${desc} [${label}]"
+      args+=("$name" "$desc")
+    done
+    name=$(whiptail --title "Elegir disco ($purpose)" --menu \
+      "Se BORRARÁ el disco elegido.\nusbdata y la SD del sistema no aparecen (o van marcados)." \
+      20 78 10 "${args[@]}" 3>&1 1>&2 2>&3) || return 1
+  else
+    echo "Discos:"
+    i=1
+    for line in "${lines[@]}"; do
+      IFS='|' read -r name size model label mnt note prot <<<"$line"
+      echo "  $i) /dev/$name  $size  $model  $note"
+      tags+=("$name|$prot")
+      i=$((i+1))
+    done
+    read -r -p "> " n
+    [[ "$n" =~ ^[0-9]+$ ]] || return 1
+    IFS='|' read -r name prot <<<"${tags[$((n-1))]}"
+  fi
+
+  # resolve protected flag for chosen
+  prot=0
+  for line in "${lines[@]}"; do
+    IFS='|' read -r n2 size model label mnt note p2 <<<"$line"
+    if [ "$n2" = "$name" ]; then
+      prot="$p2"
+      size="$size"; model="$model"; note="$note"; label="$label"
+      break
+    fi
+  done
+  if [ "$prot" = "1" ]; then
+    msg "Bloqueado" "/dev/$name está protegido ($note).\nNo se escribe ahí."
+    return 1
+  fi
+
+  if ! ask_yes "Confirmar borrado" \
+    "Vas a escribir ($purpose) en:\n\n  /dev/$name\n  $size · $model\n  $note\n\nTODO el contenido se pierde. ¿Seguro?"; then
+    return 1
+  fi
+  # double confirm for large/desktop
+  if ! ask_yes "Última confirmación" "CONFIRMA: borrar /dev/$name y grabar Nabla ($purpose)?"; then
+    return 1
+  fi
+
+  # unmount all partitions
+  local p
+  for p in $(lsblk -ln -o NAME "/dev/$name" | tail -n +2); do
+    umount -f "/dev/$p" 2>/dev/null || true
+  done
+  umount -f "/dev/$name" 2>/dev/null || true
+
+  echo "/dev/$name"
+}
+
+menu_medios() {
+  while true; do
+    local c=""
+    if have_wt; then
+      c=$(whiptail --title "$TITLE · Medios" --menu "USB / SD (sin Pi Imager)" 18 72 8 \
+        "1" "Nabla Pi OS completo (desktop) → USB/SD" \
+        "2" "Nabla Pi OS lite → USB/SD" \
+        "3" "OTP enabler (Pi 3B, una vez) → SD/USB" \
+        "4" "Listar discos" \
+        "5" "Descargar imagen base (cache)" \
+        "6" "Volver" \
+        3>&1 1>&2 2>&3) || return 0
+    else
+      echo "1 OS desktop  2 OS lite  3 OTP  4 list  5 fetch  6 back"
+      read -r -p "> " c
+    fi
+    case "$c" in
+      1)
+        local dev hn oct
+        dev="$(pick_disk os)" || continue
+        hn="$(ask_input "Hostname" "Nombre de la Pi nueva:" "edge")" || continue
+        oct="$(ask_input "Octeto" "Subnet 10.100.N.0/24 — N:" "3")" || continue
+        msg "Grabando" "Escribiendo desktop en $dev…\nPuede tardar (descarga + dd).\nMira la terminal si SSH."
+        # leave whiptail; show progress on tty
+        clear 2>/dev/null || true
+        if run_image write-usb "$dev" --desktop --hostname "$hn" --octeto "$oct"; then
+          msg "OK" "Nabla Pi OS (desktop) en $dev.\nArranca la Pi: first-boot instala Edge."
+        else
+          msg "Error" "Falló la escritura. Revisa terminal / logs."
+        fi
+        ;;
+      2)
+        local dev hn oct
+        dev="$(pick_disk os)" || continue
+        hn="$(ask_input "Hostname" "Nombre de la Pi nueva:" "edge")" || continue
+        oct="$(ask_input "Octeto" "Subnet 10.100.N.0/24 — N:" "3")" || continue
+        clear 2>/dev/null || true
+        if run_image write-usb "$dev" --lite --hostname "$hn" --octeto "$oct"; then
+          msg "OK" "Nabla Pi OS (lite) en $dev."
+        else
+          msg "Error" "Falló la escritura."
+        fi
+        ;;
+      3)
+        local dev
+        dev="$(pick_disk otp)" || continue
+        clear 2>/dev/null || true
+        if run_image write-otp "$dev"; then
+          msg "OK" "OTP enabler en $dev.\nArranca la 3B con este medio ~1 min."
+        else
+          msg "Error" "Falló write-otp."
+        fi
+        ;;
+      4)
+        local txt
+        txt="$(list_candidate_disks | sed 's/|/ · /g')"
+        [ -n "$txt" ] || txt="(ninguno)"
+        msg "Discos" "$txt"
+        ;;
+      5)
+        clear 2>/dev/null || true
+        run_image fetch-base desktop || run_image fetch-base lite
+        msg "Cache" "Imagen en ~/.cache/nabla-image (si no hubo error)."
+        ;;
+      6|"") return 0 ;;
+    esac
+  done
+}
+
+menu_red() {
+  while true; do
+    local c=""
+    if have_wt; then
+      c=$(whiptail --title "$TITLE · Red" --menu "Nabla Net / vpn-mode" 18 72 8 \
+        "1" "Estado" \
+        "2" "CABLE (eth LAN + Tailscale)" \
+        "3" "AP (SSID Nabla Net)" \
+        "4" "CABLE-AP (eth + wlan1 AP)" \
+        "5" "OFF" \
+        "6" "Volver" \
+        3>&1 1>&2 2>&3) || return 0
+    else
+      echo "1 status 2 cable 3 ap 4 cable-ap 5 off 6 back"
+      read -r -p "> " c
+    fi
+    case "$c" in
+      1)
+        local s
+        s="$([ -x "$VPN_BIN" ] && "$VPN_BIN" status 2>&1 || echo 'sin vpn-mode')"
+        msg "Estado red" "Host: $(hostname)\n\n$s"
+        ;;
+      2) clear; run_vpn cable; msg "Red" "Modo CABLE." ;;
+      3) clear; run_vpn ap; msg "Red" "Modo AP." ;;
+      4) clear; run_vpn cable-ap; msg "Red" "Modo CABLE-AP." ;;
+      5) clear; run_vpn off; msg "Red" "OFF." ;;
+      6|"") return 0 ;;
+    esac
+  done
+}
+
+
+ACC_CONF="/etc/nabla-net/accessories.conf"
+
+acc_load() {
+  display_oled=0; rotary=0; display_large=0
+  if [ -f "$ACC_CONF" ]; then
+    # shellcheck disable=SC1090
+    . "$ACC_CONF"
+  fi
+  DISPLAY_OLED="${display_oled:-0}"
+  ROTARY="${rotary:-0}"
+  DISPLAY_LARGE="${display_large:-0}"
+}
+
+acc_save() {
+  need_root
+  install -d -m 755 /etc/nabla-net
+  cat > "$ACC_CONF" <<EOF
+# Nabla Edge accessories profile (managed by nabla-config)
+# Consumed by installers / first-boot / GPIO helpers.
+display_oled=${1}
+rotary=${2}
+display_large=${3}
+EOF
+  chmod 644 "$ACC_CONF"
+}
+
+acc_label() {
+  case "$1" in
+    1|on|yes|true) echo ON ;;
+    *) echo OFF ;;
+  esac
+}
+
+acc_toggle() {
+  if [ "$1" = "1" ]; then echo 0; else echo 1; fi
+}
+
+acc_summary() {
+  acc_load
+  printf 'OLED I2C (small):  %s\n' "$(acc_label $DISPLAY_OLED)"
+  printf 'Rotary encoder:    %s\n' "$(acc_label $ROTARY)"
+  printf 'Large SPI display: %s\n' "$(acc_label $DISPLAY_LARGE)"
+  printf '\nConfig: %s\n' "$ACC_CONF"
+}
+
+menu_accesorios() {
+  while true; do
+    acc_load
+    local c="" oled_l rot_l big_l
+    oled_l=$(acc_label "$DISPLAY_OLED")
+    rot_l=$(acc_label "$ROTARY")
+    big_l=$(acc_label "$DISPLAY_LARGE")
+    if have_wt; then
+      c=$(whiptail --title "$TITLE · Accesorios" --menu \
+        "Perfil de hardware de esta Pi / imagen.\nMarca lo que lleva (o llevará) montado." 20 74 10 \
+        "1" "Pantalla pequeña I2C OLED  [$oled_l]" \
+        "2" "Encoder rotativo (EC11)    [$rot_l]" \
+        "3" "Pantalla grande SPI        [$big_l]" \
+        "4" "Aplicar OLED ahora (si ON)" \
+        "5" "Ver perfil" \
+        "6" "Volver" \
+        3>&1 1>&2 2>&3) || return 0
+    else
+      echo "Accesorios: 1 OLED[$oled_l] 2 rotary[$rot_l] 3 large[$big_l] 4 apply-oled 5 show 6 back"
+      read -r -p "> " c
+    fi
+    case "$c" in
+      1)
+        DISPLAY_OLED=$(acc_toggle "$DISPLAY_OLED")
+        acc_save "$DISPLAY_OLED" "$ROTARY" "$DISPLAY_LARGE"
+        if [ "$DISPLAY_OLED" = "1" ]; then
+          msg "Accesorios" "OLED I2C: ON\nPines tipicos: SDA=GPIO2 SCL=GPIO3 VCC 3.3V GND"
+        else
+          msg "Accesorios" "OLED I2C: OFF"
+        fi
+        ;;
+      2)
+        ROTARY=$(acc_toggle "$ROTARY")
+        acc_save "$DISPLAY_OLED" "$ROTARY" "$DISPLAY_LARGE"
+        if [ "$ROTARY" = "1" ]; then
+          msg "Accesorios" "Rotativo: ON\nEC11: A/B + switch a GPIO (pull-ups). Detalle en AGENTS.md."
+        else
+          msg "Accesorios" "Rotativo: OFF"
+        fi
+        ;;
+      3)
+        DISPLAY_LARGE=$(acc_toggle "$DISPLAY_LARGE")
+        acc_save "$DISPLAY_OLED" "$ROTARY" "$DISPLAY_LARGE"
+        if [ "$DISPLAY_LARGE" = "1" ]; then
+          msg "Accesorios" "Pantalla grande SPI: ON\nPerfil SPI TFT (kiosko). Driver/pines: docs Edge."
+        else
+          msg "Accesorios" "Pantalla grande SPI: OFF"
+        fi
+        ;;
+      4)
+        if [ "${DISPLAY_OLED:-0}" != "1" ]; then
+          if ask_yes "OLED" "El perfil tiene OLED=OFF. ¿Activarlo y aplicar servicio?"; then
+            DISPLAY_OLED=1
+            acc_save "$DISPLAY_OLED" "$ROTARY" "$DISPLAY_LARGE"
+          else
+            continue
+          fi
+        fi
+        enable_oled
+        ;;
+      5)
+        msg "Perfil accesorios" "$(acc_summary)"
+        ;;
+      6|"") return 0 ;;
+    esac
+  done
+}
+
+
+enable_camera() {
+  need_root
+  # reuse nabla-net if present
+  local nn
+  nn="$(command -v nabla-net 2>/dev/null || true)"
+  [ -x "$nn" ] || nn="$REAL_HOME/bin/nabla-net"
+  if [ -x "$nn" ]; then
+    "$nn" camera
+  else
+    msg "Cámara" "Instala nabla-net / Edge para go2rtc."
+  fi
+}
+
+
+enable_oled() {
+  need_root
+  local en
+  en="$(command -v nabla-oled-enable 2>/dev/null || true)"
+  [ -x "$en" ] || en="$REAL_HOME/bin/nabla-oled-enable"
+  [ -x "$en" ] || en="/usr/local/bin/nabla-oled-enable"
+  if [ ! -x "$en" ]; then
+    msg "OLED" "No encuentro nabla-oled-enable.\nReinstala Nabla Edge."
+    return 1
+  fi
+  if ! ask_yes "OLED I2C" "¿Activar pantallita I2C (SSD1306)?\n\nPines: VCC 3.3V, GND, SDA=GPIO2, SCL=GPIO3\nMuestra: ∇ + nabla.net + hora\n\nPuede pedir reinicio si I2C no estaba activo."; then
+    return 0
+  fi
+  clear 2>/dev/null || true
+  if "$en"; then
+    msg "OLED" "Servicio nabla-oled activado.\nSi no ves nada: revisa cables y reinicia si pidió I2C."
+  else
+    msg "OLED" "Falló la activación. Mira la terminal."
+  fi
+}
+
+oled_status() {
+  if systemctl is-active nabla-oled.service >/dev/null 2>&1; then
+    echo "OLED: active"
+  else
+    echo "OLED: inactive"
+  fi
+}
+
+enable_voice() {
+  need_root
+  msg "Voz" "Próximo: Linux Voice Assistant (mic+altavoz → HA Assist).\nMarcado pending."
+  install -d -m 755 /etc/nabla-net
+  echo pending > /etc/nabla-net/voice.status
+}
+
+cmd_info() {
+  msg "Info" "Nabla Config $VERSION\n\n• Red: cable / AP / cable-ap / off\n• Medios: Nabla Pi OS o OTP\n• Al enchufar USB: diálogo (OS / OTP / abrir)\n• Accesorios: OLED / rotativo / SPI
+• Cámara / voz\n\nRepo: \\\\coco\\nabla.net\\packages"
+}
+
+menu() {
+  while true; do
+    local c=""
+    if have_wt; then
+      c=$(whiptail --title "$TITLE" --menu "Panel Nabla Edge" 20 72 11 \
+        "1" "Red (Nabla Net / vpn-mode)" \
+        "2" "Medios USB/SD (OS / OTP)" \
+        "3" "Accesorios (OLED / rotativo / SPI)" \
+        "4" "Cámara go2rtc" \
+        "5" "Satélite de voz" \
+        "6" "Info" \
+        "7" "Salir" \
+        3>&1 1>&2 2>&3) || return 0
+    else
+      echo "===== $TITLE ====="
+      echo "1 Red  2 Medios  3 Accesorios  4 Cámara  5 Voz  6 Info  7 Salir"
+      read -r -p "> " c
+    fi
+    case "$c" in
+      1) menu_red ;;
+      2) menu_medios ;;
+      3) menu_accesorios ;;
+      4) enable_camera ;;
+      5) enable_voice ;;
+      6) cmd_info ;;
+      7|"") return 0 ;;
+    esac
+  done
+}
+
+main() {
+  case "${1:-}" in
+    ""|menu) need_root; menu ;;
+    -h|--help|help)
+      cat <<'H'
+NAME
+    nabla-config — Nabla Edge configuration panel (whiptail)
+
+SYNOPSIS
+    sudo nabla-config
+    sudo nabla-config red|medios|accesorios|oled
+    nabla-config --help
+
+DESCRIPTION
+    Interactive control panel for a Nabla Edge Raspberry Pi. It configures
+    network modes (Nabla Net / vpn-mode), writes Nabla Pi OS or OTP media to
+    USB/SD, and stores an accessories profile for optional hardware.
+
+MENUS
+    Red
+        cable, ap, cable-ap, off, status — via vpn-mode / nabla-net.
+
+    Medios
+        Download Raspberry Pi OS (cached), inject Nabla first-boot, write
+        USB/SD; or write a one-shot OTP enabler for Pi 3B USB boot.
+
+    Accesorios
+        Toggle and persist hardware intent under
+        /etc/nabla-net/accessories.conf:
+          display_oled=0|1     small I2C SSD1306 OLED
+          rotary=0|1           EC11 rotary encoder
+          display_large=0|1    large SPI TFT / kiosk panel
+        "Aplicar OLED ahora" runs nabla-oled-enable when OLED is ON.
+
+    Camara / Voz
+        go2rtc USB camera helper; voice satellite placeholder.
+
+FILES
+    /etc/nabla-net/accessories.conf
+        Accessories profile read by installers and helpers.
+    \\coco\nabla.net\packages
+        Central package drop (tarballs today; apt repo next).
+
+EXIT STATUS
+    0  success or user cancel from menu
+    1  usage / missing tool / root required
+
+SEE ALSO
+    nabla-net, nabla-image, vpn-mode, AGENTS.md on \\coco\nabla.net
+H
+      ;;
+    medios|media|image) need_root; menu_medios ;;
+    red|net) need_root; menu_red ;;
+    accesorios|accessories|acc) need_root; menu_accesorios ;;
+    oled) need_root; enable_oled ;;
+    *) echo "Usa: sudo nabla-config"; exit 1 ;;
+  esac
+}
+
+main "$@"

@@ -3,7 +3,7 @@
 # Uso: sudo nabla-config
 set -euo pipefail
 
-VERSION="0.7.0"
+VERSION="0.8.0"
 OWNER="${SUDO_USER:-$USER}"
 REAL_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
 REAL_HOME="${REAL_HOME:-$HOME}"
@@ -440,11 +440,221 @@ oled_status() {
   fi
 }
 
-enable_voice() {
+# --- Voice satellite helpers ---
+VOICE_CONF="/etc/nabla-edge/voice.conf"
+VOICE_INSTALLER="/opt/nabla-edge/voice/install-voice-satellite.sh"
+
+voice_load() {
+  VOICE_MODE="button"
+  VOICE_NAME="$(hostname -s 2>/dev/null || echo edge)"
+  VOICE_PORT=10700
+  VOICE_GPIO=17
+  VOICE_HA_URL=""
+  VOICE_WAKE_WORD="hey_jarvis"
+  if [ -f "$VOICE_CONF" ]; then
+    # shellcheck disable=SC1090
+    . "$VOICE_CONF"
+    VOICE_MODE="${MODE:-button}"
+    VOICE_NAME="${SATELLITE_NAME:-$VOICE_NAME}"
+    VOICE_PORT="${PORT:-10700}"
+    VOICE_GPIO="${GPIO_PIN:-17}"
+    VOICE_HA_URL="${HA_URL:-}"
+    VOICE_WAKE_WORD="${WAKE_WORD:-hey_jarvis}"
+  fi
+}
+
+voice_save() {
   need_root
-  msg "Voz" "Próximo: Linux Voice Assistant (mic+altavoz → HA Assist).\nMarcado pending."
-  install -d -m 755 /etc/nabla-net
-  echo pending > /etc/nabla-net/voice.status
+  install -d -m 755 /etc/nabla-edge
+  cat > "$VOICE_CONF" <<EOF
+# Nabla Edge Voice Satellite Configuration
+# Managed by nabla-config
+
+MODE=$VOICE_MODE
+SATELLITE_NAME=$VOICE_NAME
+HA_URL=${VOICE_HA_URL:-https://example.invalid}
+HA_TOKEN_FILE=/etc/nabla-edge/ha-token
+GPIO_PIN=$VOICE_GPIO
+WAKE_WORD=$VOICE_WAKE_WORD
+PORT=$VOICE_PORT
+MIC_DEVICE=
+SPK_DEVICE=
+WAKE_URI=tcp://127.0.0.1:10400
+EOF
+  chmod 644 "$VOICE_CONF"
+}
+
+voice_status() {
+  local sat_active ptt_active
+  sat_active="inactive"
+  ptt_active="inactive"
+  # Check user service (as the real user, not root)
+  if sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$(id -u "$OWNER")" \
+     systemctl --user is-active wyoming-satellite.service >/dev/null 2>&1; then
+    sat_active="active"
+  fi
+  if sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$(id -u "$OWNER")" \
+     systemctl --user is-active nabla-voice-ptt.service >/dev/null 2>&1; then
+    ptt_active="active"
+  fi
+  
+  voice_load
+  local mode_label
+  case "$VOICE_MODE" in
+    button) mode_label="Botón GPIO (PTT)" ;;
+    wake) mode_label="Wake word local" ;;
+    *) mode_label="$VOICE_MODE" ;;
+  esac
+  
+  printf 'Modo:        %s\n' "$mode_label"
+  printf 'Nombre:      %s\n' "$VOICE_NAME"
+  printf 'Puerto:      %s\n' "$VOICE_PORT"
+  if [ "$VOICE_MODE" = "button" ]; then
+    printf 'GPIO botón:  %s\n' "$VOICE_GPIO"
+    printf 'PTT service: %s\n' "$ptt_active"
+  else
+    printf 'Wake word:   %s\n' "$VOICE_WAKE_WORD"
+  fi
+  printf 'Satellite:   %s\n' "$sat_active"
+  printf '\nConfig: %s\n' "$VOICE_CONF"
+}
+
+voice_install() {
+  need_root
+  if [ ! -f "$VOICE_INSTALLER" ]; then
+    # Try finding it in the source tree (for development)
+    local alt="/workspace/nablaedge/voice/install-voice-satellite.sh"
+    [ -f "$alt" ] && VOICE_INSTALLER="$alt"
+  fi
+  if [ ! -f "$VOICE_INSTALLER" ]; then
+    msg "Voz" "No encuentro el instalador:\n$VOICE_INSTALLER\n\nReinstala Nabla Edge."
+    return 1
+  fi
+  
+  voice_load
+  
+  if ! ask_yes "Instalar satélite" \
+    "Instalar Wyoming satellite para Home Assistant Assist.\n\nModo: $VOICE_MODE\nNombre: $VOICE_NAME\nPuerto: $VOICE_PORT\n\nRequiere Python 3, pip, ALSA.\n¿Continuar?"; then
+    return 0
+  fi
+  
+  clear 2>/dev/null || true
+  if "$VOICE_INSTALLER" --mode "$VOICE_MODE" --name "$VOICE_NAME" --port "$VOICE_PORT"; then
+    msg "Voz" "Satélite instalado.\n\nPróximos pasos:\n1. Edita $VOICE_CONF\n2. Pon el token HA en /etc/nabla-edge/ha-token\n3. Inicia: systemctl --user start wyoming-satellite\n4. Añade en HA: Wyoming → host:$VOICE_PORT"
+  else
+    msg "Voz" "Falló la instalación. Revisa terminal / logs."
+  fi
+}
+
+voice_start() {
+  need_root
+  local uid
+  uid="$(id -u "$OWNER")"
+  
+  sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
+    systemctl --user start wyoming-satellite.service 2>/dev/null || true
+  
+  voice_load
+  if [ "$VOICE_MODE" = "button" ]; then
+    sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
+      systemctl --user start nabla-voice-ptt.service 2>/dev/null || true
+  fi
+  
+  msg "Voz" "Servicios iniciados.\n\nwyoming-satellite: $(systemctl --user is-active wyoming-satellite 2>/dev/null || echo '?')"
+}
+
+voice_stop() {
+  need_root
+  local uid
+  uid="$(id -u "$OWNER")"
+  
+  sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
+    systemctl --user stop wyoming-satellite.service 2>/dev/null || true
+  sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
+    systemctl --user stop nabla-voice-ptt.service 2>/dev/null || true
+  
+  msg "Voz" "Servicios detenidos."
+}
+
+voice_ha_instructions() {
+  voice_load
+  local ip_hint
+  ip_hint="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [ -z "$ip_hint" ] && ip_hint="<IP-de-esta-Pi>"
+  
+  msg "Configuración HA" "En Home Assistant:\n\n1. Settings → Devices & Services\n2. Add Integration → Wyoming\n3. Host: $ip_hint\n   Port: $VOICE_PORT\n\nRequisitos en HA:\n• Add-on Whisper (STT)\n• Add-on Piper (TTS)\n• Assist pipeline configurado\n\nEl satélite aparece como:\n  assist_satellite.$VOICE_NAME"
+}
+
+menu_voz() {
+  while true; do
+    voice_load
+    local c="" mode_l
+    case "$VOICE_MODE" in
+      button) mode_l="Botón GPIO" ;;
+      wake) mode_l="Wake word" ;;
+      *) mode_l="$VOICE_MODE" ;;
+    esac
+    
+    if have_wt; then
+      c=$(whiptail --title "$TITLE · Satélite de Voz" --menu \
+        "Wyoming satellite para Home Assistant Assist.\nMic+altavoz en esta Pi, STT/TTS en HA." 22 76 12 \
+        "1" "Instalar / reinstalar satélite" \
+        "2" "Modo: $mode_l  [cambiar]" \
+        "3" "Nombre satélite: $VOICE_NAME  [cambiar]" \
+        "4" "Puerto Wyoming: $VOICE_PORT  [cambiar]" \
+        "5" "GPIO botón (modo button): $VOICE_GPIO  [cambiar]" \
+        "6" "Iniciar servicios" \
+        "7" "Detener servicios" \
+        "8" "Ver estado" \
+        "9" "Instrucciones para HA" \
+        "10" "Volver" \
+        3>&1 1>&2 2>&3) || return 0
+    else
+      echo "Voz: 1 install 2 mode[$mode_l] 3 name[$VOICE_NAME] 4 port[$VOICE_PORT] 5 gpio[$VOICE_GPIO] 6 start 7 stop 8 status 9 HA-help 10 back"
+      read -r -p "> " c
+    fi
+    
+    case "$c" in
+      1) voice_install ;;
+      2)
+        if [ "$VOICE_MODE" = "button" ]; then
+          VOICE_MODE="wake"
+          voice_save
+          msg "Voz" "Modo: Wake word local.\n\nNecesitas Docker con rhasspy/wyoming-openwakeword\nen 127.0.0.1:10400.\n\nPara Pi, recomendamos modo botón."
+        else
+          VOICE_MODE="button"
+          voice_save
+          msg "Voz" "Modo: Botón GPIO (PTT).\n\nConecta un pulsador entre GPIO$VOICE_GPIO y GND.\nAl pulsar, arranca la conversación Assist."
+        fi
+        ;;
+      3)
+        local new_name
+        new_name="$(ask_input "Nombre" "Nombre del satélite (aparece en HA):" "$VOICE_NAME")" || continue
+        [ -n "$new_name" ] && VOICE_NAME="$new_name"
+        voice_save
+        msg "Voz" "Nombre: $VOICE_NAME\n\nEn HA aparecerá como: assist_satellite.$VOICE_NAME"
+        ;;
+      4)
+        local new_port
+        new_port="$(ask_input "Puerto" "Puerto Wyoming (default 10700):" "$VOICE_PORT")" || continue
+        [[ "$new_port" =~ ^[0-9]+$ ]] && VOICE_PORT="$new_port"
+        voice_save
+        msg "Voz" "Puerto: $VOICE_PORT"
+        ;;
+      5)
+        local new_gpio
+        new_gpio="$(ask_input "GPIO" "Pin GPIO del botón (BCM, ej: 17, 27, 22):" "$VOICE_GPIO")" || continue
+        [[ "$new_gpio" =~ ^[0-9]+$ ]] && VOICE_GPIO="$new_gpio"
+        voice_save
+        msg "Voz" "GPIO botón: $VOICE_GPIO\n\nConecta pulsador entre GPIO$VOICE_GPIO y GND (pull-up interno)."
+        ;;
+      6) voice_start ;;
+      7) voice_stop ;;
+      8) msg "Estado satélite voz" "$(voice_status)" ;;
+      9) voice_ha_instructions ;;
+      10|"") return 0 ;;
+    esac
+  done
 }
 
 cmd_info() {
@@ -475,7 +685,7 @@ menu() {
       2) menu_medios ;;
       3) menu_accesorios ;;
       4) enable_camera ;;
-      5) enable_voice ;;
+      5) menu_voz ;;
       6) cmd_info ;;
       7|"") return 0 ;;
     esac
@@ -516,8 +726,15 @@ MENUS
           display_large=0|1    large SPI TFT / kiosk panel
         "Aplicar OLED ahora" runs nabla-oled-enable when OLED is ON.
 
-    Camara / Voz
-        go2rtc USB camera helper; voice satellite placeholder.
+    Camara
+        go2rtc USB camera helper.
+
+    Satélite de Voz
+        Wyoming voice satellite for Home Assistant Assist.
+        Two modes:
+          button  GPIO push-to-talk (recommended for Pi)
+          wake    Local openWakeWord Docker (desktop/powerful hosts)
+        Config: /etc/nabla-edge/voice.conf
 
 FILES
     /etc/nabla-net/accessories.conf
@@ -537,6 +754,7 @@ H
     red|net) need_root; menu_red ;;
     accesorios|accessories|acc) need_root; menu_accesorios ;;
     oled) need_root; enable_oled ;;
+    voz|voice) need_root; menu_voz ;;
     *) echo "Usa: sudo nabla-config"; exit 1 ;;
   esac
 }

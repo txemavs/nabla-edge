@@ -3,22 +3,55 @@
 #
 # See: nablaedge/docs/voice-satellite/README.md
 
-# Mode: button (HA start_conversation) or wake (local wake word)
-# - button: Trigger via HA dashboard button (recommended for wall-mounted Pi)
-# - wake: Continuous wake word detection (uses more CPU)
+# =============================================================================
+# TRIGGER MODE
+# =============================================================================
+# Primary trigger mechanism for the voice satellite.
+#
+# button (default) — HA start_conversation from phone/dashboard/GPIO
+#   Recommended for: Wall-mounted Pi, low-power, noisy environments
+#   Wake word: disabled (saves CPU)
+#
+# wake — Continuous local wake word detection
+#   Recommended for: Desktop/workstation, hands-free environments
+#   Wake word: enabled (uses more CPU)
+#
 MODE=button
 
-# Satellite name (appears in HA as assist_satellite.<name>_satellite_assist)
+# =============================================================================
+# SATELLITE IDENTITY
+# =============================================================================
+# Name appears in HA as: assist_satellite.<name>_satellite_assist
 SATELLITE_NAME=demo
 
-# ESPHome port (default 6053)
-# HA adds via ESPHome integration using this port
+# ESPHome native API port (HA adds via ESPHome integration)
 PORT=6053
 
-# Wake word name (when MODE=wake)
-# Available: hey_jarvis, ok_nabu, alexa, hey_mycroft
+# =============================================================================
+# WAKE WORD (only active when MODE=wake)
+# =============================================================================
+# Built-in wake words (microWakeWord):
+#   hey_jarvis, ok_nabu, alexa, hey_mycroft
+#
 WAKE_WORD=hey_jarvis
 
-# GPIO pin for optional physical button (BCM numbering)
-# Connect between GPIO pin and GND for manual trigger
+# Custom wake word (COMING SOON):
+# "Oye Veronica" model training in progress.
+# Once ready, place .tflite + .json in /opt/nabla-edge/voice/wake/
+# CUSTOM_WAKE_MODEL=
+# CUSTOM_WAKE_SENSITIVITY=0.5
+
+# =============================================================================
+# GPIO BUTTON (optional, for physical trigger in button mode)
+# =============================================================================
+# Connect momentary button between GPIO pin and GND.
+# BCM numbering (GPIO17 = physical pin 11).
+#
 GPIO_PIN=17
+
+# =============================================================================
+# AUDIO (auto-detected if empty)
+# =============================================================================
+# List devices: arecord -L / aplay -L
+# MIC_DEVICE=default
+# SPEAKER_DEVICE=default

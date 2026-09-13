@@ -2,31 +2,30 @@
 
 Linux Voice Assistant (LVA) for Home Assistant Assist integration.
 
-## Primary Trigger: HA start_conversation
+> **Do NOT use Wyoming Satellite.** It is deprecated. Use LVA.
 
-Wall-mounted Pi: users trigger listening from their phone via HA dashboard button calling `assist_satellite.start_conversation`.
+## Trigger Modes
 
-```
-[Phone tap "Listen"]  →  [HA service call]  →  [LVA :6053]  →  Satellite starts listening
-```
-
-Wake word is available on capable hosts but not required.
+| Mode | Trigger | Recommended For |
+|------|---------|-----------------|
+| **button** (default) | HA `start_conversation` or GPIO | Wall-mounted Pi, low-power |
+| **wake** | Continuous wake word | Desktop, hands-free |
 
 ## Why LVA over Wyoming Satellite?
 
 | Feature | LVA | Wyoming Satellite |
 |---------|-----|-------------------|
 | Protocol | ESPHome (:6053) | Wyoming (:10700) |
-| start_conversation | Yes (features=3) | No (features=1) |
+| start_conversation | **Yes** (features=3) | No (features=1) |
 | announce | Yes | Yes |
-| Wake word | Built-in | Separate container |
-| Status | Active (OHF-Voice) | Deprecated |
+| Wake word | Built-in (microWakeWord) | Separate container |
+| Status | **Active** (OHF-Voice) | **Deprecated** |
 
 ## Components
 
-| File | Role |
-|------|------|
-| [`voice.conf.example`](voice.conf.example) | Configuration template |
+| File | Description |
+|------|-------------|
+| [`voice.conf.example`](voice.conf.example) | Configuration template with documented options |
 | [`install-lva.sh`](install-lva.sh) | Docker Compose installer |
 
 ## Quick Start
@@ -40,11 +39,9 @@ sudo nabla-config
 sudo /opt/nabla-edge/voice/install-lva.sh
 ```
 
-## HA Dashboard Button Setup
+## HA Dashboard Button
 
-LVA exposes `assist_satellite.<name>_satellite_assist` with `supported_features: 3`.
-
-**Add button to dashboard:**
+Add a button to trigger `start_conversation`:
 
 ```yaml
 type: button
@@ -61,15 +58,28 @@ tap_action:
 
 ## Configuration
 
-Config file: `/etc/nabla-edge/voice.conf`
+Config: `/etc/nabla-edge/voice.conf`
 
 ```bash
+# Trigger mode (default: button)
 MODE=button              # button | wake
-SATELLITE_NAME=demo      # Shows in HA as assist_satellite.<name>_satellite_assist
-PORT=6053                # ESPHome port
+
+# Satellite identity
+SATELLITE_NAME=demo      # → assist_satellite.demo_satellite_assist
+PORT=6053                # ESPHome native API port
+
+# Wake word (only active when MODE=wake)
 WAKE_WORD=hey_jarvis     # hey_jarvis, ok_nabu, alexa, hey_mycroft
-GPIO_PIN=17              # Optional physical button pin
+
+# GPIO button (optional physical trigger)
+GPIO_PIN=17              # BCM pin number
 ```
+
+## Custom Wake Word (Coming Soon)
+
+"Oye Veronica" microWakeWord model is training. Once ready:
+- Place `.tflite` + `.json` in `/opt/nabla-edge/voice/wake/`
+- Update config to use custom model
 
 ## See Also
 

@@ -76,14 +76,18 @@ nabla-config (Main Menu)
 │   └── go2rtc            → Camera helper
 │
 └── Voice Satellite
-    ├── Install / update  → Install LVA via Docker
-    ├── Mode              → button (HA) / wake (continuous)
-    ├── Satellite name    → Name for HA entity
-    ├── Wake word         → hey_jarvis, ok_nabu, etc.
-    ├── ESPHome port      → Default 6053
-    ├── Start / Stop      → Control LVA container
-    ├── View status       → Show LVA status
-    └── HA Instructions   → ESPHome + dashboard button setup
+    ├── Install / update     → Install LVA via Docker
+    ├── ─ Configuration ─
+    │   ├── Satellite name   → Name for HA entity
+    │   └── ESPHome port     → Default 6053
+    ├── ─ Trigger Mode ─
+    │   ├── Mode             → button (default) / wake (continuous)
+    │   ├── Wake word        → Select built-in wake word
+    │   └── Wake word (custom) → Coming soon (Oye Veronica)
+    ├── ─ Control ─
+    │   ├── Start / Stop     → Control LVA container
+    │   ├── View status      → Show LVA status
+    │   └── HA Instructions  → ESPHome + dashboard button setup
 ```
 
 ---

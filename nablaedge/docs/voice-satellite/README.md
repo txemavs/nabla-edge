@@ -8,17 +8,48 @@ A Nabla Edge Pi can become a **wall-mounted conversation point**: mic + speakers
 
 ## Linux Voice Assistant (LVA)
 
-We use **Linux Voice Assistant** from OHF-Voice — the official successor to wyoming-satellite. LVA uses the ESPHome protocol and provides full Assist Satellite features:
+We use **Linux Voice Assistant** from OHF-Voice — the official successor to Wyoming Satellite. LVA uses the ESPHome protocol and provides full Assist Satellite features.
+
+> **Do NOT use Wyoming Satellite.** It is deprecated and lacks `start_conversation` support (`supported_features: 1` vs LVA's `supported_features: 3`). All new installations should use LVA.
 
 | Feature | LVA | Wyoming Satellite (deprecated) |
 |---------|-----|--------------------------------|
 | Protocol | ESPHome (:6053) | Wyoming (:10700) |
-| `start_conversation` | Yes | No |
+| `start_conversation` | **Yes** | No |
 | `announce` | Yes | Yes |
 | Wake word | Built-in (microWakeWord) | Separate container |
-| `supported_features` | 3 | 1 |
+| `supported_features` | **3** | 1 |
+| Status | **Active** (OHF-Voice) | **Deprecated** |
 
-## Primary Trigger: HA Dashboard Button
+---
+
+## Deployment Paths
+
+### Raspberry Pi (Wall-mounted)
+
+**Primary trigger: Button / HA start_conversation**
+
+Wall-mounted Pis are triggered remotely — users don't walk to the device. Use HA dashboard buttons or GPIO physical buttons.
+
+- **Mode:** `button` (default)
+- **Trigger:** `assist_satellite.start_conversation` from HA Companion app or dashboard
+- **Wake word:** Disabled by default (saves CPU)
+- **GPIO:** Optional physical button for local trigger
+
+### Desktop / Mac / Linux Workstation
+
+**Primary trigger: Wake word + optional button**
+
+Desktop hosts can run continuous wake word detection.
+
+- **Mode:** `wake`
+- **Wake word:** `ok_nabu` (built-in), custom models planned
+- **Custom wake word:** "Oye Veronica" (microWakeWord training in progress — NOT ready)
+- **Note:** HA `start_conversation` also works as a fallback
+
+---
+
+## Primary Trigger: Button / Remote Start
 
 Wall-mounted Pi: users trigger from their phone, not by walking to the device.
 
@@ -170,17 +201,77 @@ docker compose up -d
 
 ---
 
-## Modes
+## Trigger Modes
 
-### Button Mode (Recommended for Pi)
+### Button Mode (Default for Pi)
 
-Primary trigger is HA `start_conversation` called from phone dashboard. Wake word disabled to save CPU.
+Primary trigger is HA `start_conversation` called from phone dashboard or GPIO button. Wake word disabled to save CPU.
 
-### Wake Mode (Optional)
+**Recommended for:**
+- Wall-mounted Pi satellites
+- Battery-powered / low-power deployments
+- Noisy environments
+
+### Wake Mode (Desktop / Optional)
 
 Continuous wake word detection using microWakeWord. Uses more CPU but enables hands-free activation.
 
-Available wake words: `hey_jarvis`, `ok_nabu`, `alexa`, `hey_mycroft`
+**Available wake words:** `hey_jarvis`, `ok_nabu`, `alexa`, `hey_mycroft`
+
+**Custom wake word (coming soon):**
+- "Oye Veronica" — microWakeWord model training on RTX 4090
+- Once ready, `.tflite` + `.json` files go to `/opt/nabla-edge/voice/wake/`
+
+**Recommended for:**
+- Desktop workstations with always-on power
+- Hands-free environments
+- Development/testing
+
+---
+
+## GPIO Button Trigger
+
+For physical button trigger on Raspberry Pi, connect a momentary button between GPIO pin and GND.
+
+### Wiring
+
+```
+GPIO 17 ─────┐
+             │
+           [ ○ ]  Momentary button
+             │
+GND ─────────┘
+```
+
+### Configuration
+
+In `/etc/nabla-edge/voice.conf`:
+
+```bash
+MODE=button
+GPIO_PIN=17
+```
+
+### HA Automation (Alternative)
+
+Instead of local GPIO handling, you can use an HA automation to trigger `start_conversation` when a GPIO binary sensor activates:
+
+```yaml
+automation:
+  - alias: "Voice button pressed"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.example_voice_button
+        to: "on"
+    action:
+      - service: assist_satellite.start_conversation
+        target:
+          entity_id: assist_satellite.demo_satellite_assist
+```
+
+### GPIO Button Service (Optional)
+
+For local GPIO handling without HA, a systemd service can watch the GPIO pin and trigger LVA directly. This is planned for a future release.
 
 ---
 

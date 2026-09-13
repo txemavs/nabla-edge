@@ -615,45 +615,46 @@ voice_ha_instructions() {
 menu_voice() {
   while true; do
     voice_load
-    local c="" mode_l
+    local c="" mode_l wake_status
     case "$VOICE_MODE" in
-      button) mode_l="HA button" ;;
-      wake) mode_l="Wake word" ;;
+      button) mode_l="Button / remote start (default)" ;;
+      wake) mode_l="Wake word (continuous)" ;;
       *) mode_l="$VOICE_MODE" ;;
     esac
     
+    # Wake word status for menu display
+    if [ "$VOICE_MODE" = "wake" ]; then
+      wake_status="ON: $VOICE_WAKE_WORD"
+    else
+      wake_status="OFF (button mode)"
+    fi
+    
     if have_wt; then
       c=$(whiptail --title "$TITLE · Voice Satellite" --menu \
-        "Linux Voice Assistant for Home Assistant.\nWall-mounted Pi: trigger via HA start_conversation.\nWake word optional on capable hosts." 24 78 12 \
+        "Linux Voice Assistant for Home Assistant.\n\nTrigger modes:\n  • Button (default): HA start_conversation from phone/dashboard\n  • Wake word: Continuous listening (optional, uses more CPU)" 26 78 14 \
         "1" "Install / update LVA (Docker)" \
-        "2" "Mode: $mode_l  [change]" \
-        "3" "Satellite name: $VOICE_NAME  [change]" \
-        "4" "Wake word: $VOICE_WAKE_WORD  [change]" \
-        "5" "ESPHome port: $VOICE_PORT  [change]" \
-        "6" "Start LVA" \
-        "7" "Stop LVA" \
-        "8" "View status" \
-        "9" "HA Instructions (ESPHome + button)" \
-        "10" "Back" \
+        "2" "──────── Configuration ────────" \
+        "3" "Satellite name: $VOICE_NAME" \
+        "4" "ESPHome port: $VOICE_PORT" \
+        "5" "──────── Trigger Mode ────────" \
+        "6" "Mode: $mode_l" \
+        "7" "Wake word: $wake_status" \
+        "8" "Wake word (custom) — Coming soon" \
+        "9" "──────── Control ────────" \
+        "10" "Start LVA" \
+        "11" "Stop LVA" \
+        "12" "View status" \
+        "13" "HA Setup Instructions" \
+        "14" "Back" \
         3>&1 1>&2 2>&3) || return 0
     else
-      echo "Voice: 1 install 2 mode[$mode_l] 3 name[$VOICE_NAME] 4 wake[$VOICE_WAKE_WORD] 5 port[$VOICE_PORT] 6 start 7 stop 8 status 9 HA-help 10 back"
+      echo "Voice: 1 install 3 name[$VOICE_NAME] 4 port[$VOICE_PORT] 6 mode[$mode_l] 7 wake[$wake_status] 10 start 11 stop 12 status 13 HA-help 14 back"
       read -r -p "> " c
     fi
     
     case "$c" in
       1) voice_install ;;
-      2)
-        if [ "$VOICE_MODE" = "button" ]; then
-          VOICE_MODE="wake"
-          voice_save
-          msg "Voice" "Mode: Wake word enabled.\n\nLVA listens for '$VOICE_WAKE_WORD' continuously.\nNote: uses more CPU than button mode.\n\nHA start_conversation still works too."
-        else
-          VOICE_MODE="button"
-          voice_save
-          msg "Voice" "Mode: HA start_conversation (primary).\n\nTrigger from phone via dashboard button.\nWake word disabled to save CPU."
-        fi
-        ;;
+      2|5|9) continue ;;  # Separator lines
       3)
         local new_name
         new_name="$(ask_input "Name" "Satellite name (appears in HA):" "$VOICE_NAME")" || continue
@@ -662,24 +663,42 @@ menu_voice() {
         msg "Voice" "Name: $VOICE_NAME\n\nRestart LVA for changes to take effect."
         ;;
       4)
-        local new_wake
-        new_wake="$(ask_input "Wake word" "Wake word (hey_jarvis, ok_nabu, alexa, hey_mycroft):" "$VOICE_WAKE_WORD")" || continue
-        [ -n "$new_wake" ] && VOICE_WAKE_WORD="$new_wake"
-        voice_save
-        msg "Voice" "Wake word: $VOICE_WAKE_WORD\n\nRestart LVA for changes to take effect."
-        ;;
-      5)
         local new_port
         new_port="$(ask_input "Port" "ESPHome port (default 6053):" "$VOICE_PORT")" || continue
         [[ "$new_port" =~ ^[0-9]+$ ]] && VOICE_PORT="$new_port"
         voice_save
         msg "Voice" "Port: $VOICE_PORT\n\nRestart LVA for changes to take effect."
         ;;
-      6) voice_start ;;
-      7) voice_stop ;;
-      8) msg "Voice satellite status" "$(voice_status)" ;;
-      9) voice_ha_instructions ;;
-      10|"") return 0 ;;
+      6)
+        if [ "$VOICE_MODE" = "button" ]; then
+          VOICE_MODE="wake"
+          voice_save
+          msg "Voice" "Mode: Wake word (continuous listening).\n\nLVA listens for '$VOICE_WAKE_WORD'.\nNote: uses more CPU than button mode.\n\nHA start_conversation still works too."
+        else
+          VOICE_MODE="button"
+          voice_save
+          msg "Voice" "Mode: Button / remote start (default).\n\nPrimary trigger: HA start_conversation\nCall from phone dashboard button or GPIO.\nWake word disabled to save CPU."
+        fi
+        ;;
+      7)
+        if [ "$VOICE_MODE" != "wake" ]; then
+          msg "Voice" "Wake word is only active in 'wake' mode.\n\nCurrent mode: button (default)\n\nChange mode first via option 6 to enable\ncontinuous wake word listening."
+          continue
+        fi
+        local new_wake
+        new_wake="$(ask_input "Wake word" "Available: hey_jarvis, ok_nabu, alexa, hey_mycroft" "$VOICE_WAKE_WORD")" || continue
+        [ -n "$new_wake" ] && VOICE_WAKE_WORD="$new_wake"
+        voice_save
+        msg "Voice" "Wake word: $VOICE_WAKE_WORD\n\nRestart LVA for changes to take effect."
+        ;;
+      8)
+        msg "Custom Wake Word" "Coming soon: Custom wake word support.\n\nPlanned:\n  • Oye Veronica (microWakeWord, training)\n  • Custom .tflite model upload\n\nCurrently training on RTX 4090.\nOnce ready, model files go to:\n  /opt/nabla-edge/voice/wake/\n\nFor now, use built-in wake words:\n  hey_jarvis, ok_nabu, alexa, hey_mycroft"
+        ;;
+      10) voice_start ;;
+      11) voice_stop ;;
+      12) msg "Voice satellite status" "$(voice_status)" ;;
+      13) voice_ha_instructions ;;
+      14|"") return 0 ;;
     esac
   done
 }

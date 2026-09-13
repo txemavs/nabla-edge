@@ -448,6 +448,7 @@ voice_load() {
   VOICE_MODE="button"
   VOICE_NAME="$(hostname -s 2>/dev/null || echo edge)"
   VOICE_PORT=10700
+  VOICE_HTTP_PORT=10701
   VOICE_GPIO=17
   VOICE_HA_URL=""
   VOICE_WAKE_WORD="hey_jarvis"
@@ -457,6 +458,7 @@ voice_load() {
     VOICE_MODE="${MODE:-button}"
     VOICE_NAME="${SATELLITE_NAME:-$VOICE_NAME}"
     VOICE_PORT="${PORT:-10700}"
+    VOICE_HTTP_PORT="${LISTEN_HTTP_PORT:-10701}"
     VOICE_GPIO="${GPIO_PIN:-17}"
     VOICE_HA_URL="${HA_URL:-}"
     VOICE_WAKE_WORD="${WAKE_WORD:-hey_jarvis}"
@@ -477,6 +479,7 @@ HA_TOKEN_FILE=/etc/nabla-edge/ha-token
 GPIO_PIN=$VOICE_GPIO
 WAKE_WORD=$VOICE_WAKE_WORD
 PORT=$VOICE_PORT
+LISTEN_HTTP_PORT=$VOICE_HTTP_PORT
 MIC_DEVICE=
 SPK_DEVICE=
 WAKE_URI=tcp://127.0.0.1:10400
@@ -485,13 +488,18 @@ EOF
 }
 
 voice_status() {
-  local sat_active ptt_active
+  local sat_active listen_active ptt_active
   sat_active="inactive"
+  listen_active="inactive"
   ptt_active="inactive"
   # Check user service (as the real user, not root)
   if sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$(id -u "$OWNER")" \
      systemctl --user is-active wyoming-satellite.service >/dev/null 2>&1; then
     sat_active="active"
+  fi
+  if sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$(id -u "$OWNER")" \
+     systemctl --user is-active nabla-voice-listen.service >/dev/null 2>&1; then
+    listen_active="active"
   fi
   if sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$(id -u "$OWNER")" \
      systemctl --user is-active nabla-voice-ptt.service >/dev/null 2>&1; then
@@ -501,21 +509,24 @@ voice_status() {
   voice_load
   local mode_label
   case "$VOICE_MODE" in
-    button) mode_label="Botón GPIO (PTT)" ;;
+    button) mode_label="HTTP + GPIO opcional" ;;
     wake) mode_label="Wake word local" ;;
     *) mode_label="$VOICE_MODE" ;;
   esac
   
-  printf 'Modo:        %s\n' "$mode_label"
-  printf 'Nombre:      %s\n' "$VOICE_NAME"
-  printf 'Puerto:      %s\n' "$VOICE_PORT"
+  printf 'Modo:            %s\n' "$mode_label"
+  printf 'Nombre:          %s\n' "$VOICE_NAME"
+  printf 'Puerto Wyoming:  %s\n' "$VOICE_PORT"
+  printf 'Puerto HTTP:     %s\n' "$VOICE_HTTP_PORT"
+  printf '\nServicios:\n'
+  printf '  Satellite:     %s\n' "$sat_active"
+  printf '  HTTP listen:   %s  (trigger principal)\n' "$listen_active"
   if [ "$VOICE_MODE" = "button" ]; then
-    printf 'GPIO botón:  %s\n' "$VOICE_GPIO"
-    printf 'PTT service: %s\n' "$ptt_active"
+    printf '  GPIO PTT:      %s  (secundario opcional)\n' "$ptt_active"
+    printf '\nGPIO botón:      %s\n' "$VOICE_GPIO"
   else
-    printf 'Wake word:   %s\n' "$VOICE_WAKE_WORD"
+    printf '  Wake word:     %s\n' "$VOICE_WAKE_WORD"
   fi
-  printf 'Satellite:   %s\n' "$sat_active"
   printf '\nConfig: %s\n' "$VOICE_CONF"
 }
 
@@ -540,7 +551,7 @@ voice_install() {
   
   clear 2>/dev/null || true
   if "$VOICE_INSTALLER" --mode "$VOICE_MODE" --name "$VOICE_NAME" --port "$VOICE_PORT"; then
-    msg "Voz" "Satélite instalado.\n\nPróximos pasos:\n1. Edita $VOICE_CONF\n2. Pon el token HA en /etc/nabla-edge/ha-token\n3. Inicia: systemctl --user start wyoming-satellite\n4. Añade en HA: Wyoming → host:$VOICE_PORT"
+    msg "Voz" "Satélite instalado.\n\nPróximos pasos:\n1. Inicia servicios (opción 6)\n2. En HA: Wyoming → host:$VOICE_PORT\n3. Añade botón 'Escuchar' en dashboard\n   (ver opción 9: Instrucciones HA)\n\nEl botón del dashboard es el trigger principal.\nGPIO es secundario opcional."
   else
     msg "Voz" "Falló la instalación. Revisa terminal / logs."
   fi
@@ -554,13 +565,12 @@ voice_start() {
   sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
     systemctl --user start wyoming-satellite.service 2>/dev/null || true
   
-  voice_load
-  if [ "$VOICE_MODE" = "button" ]; then
-    sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
-      systemctl --user start nabla-voice-ptt.service 2>/dev/null || true
-  fi
+  # HTTP listen endpoint is the primary trigger
+  sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
+    systemctl --user start nabla-voice-listen.service 2>/dev/null || true
   
-  msg "Voz" "Servicios iniciados.\n\nwyoming-satellite: $(systemctl --user is-active wyoming-satellite 2>/dev/null || echo '?')"
+  voice_load
+  msg "Voz" "Servicios iniciados.\n\nSatellite: $(sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user is-active wyoming-satellite 2>/dev/null || echo '?')\nHTTP listen: $(sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user is-active nabla-voice-listen 2>/dev/null || echo '?')\n\nGPIO PTT (opcional): systemctl --user start nabla-voice-ptt"
 }
 
 voice_stop() {
@@ -570,6 +580,8 @@ voice_stop() {
   
   sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
     systemctl --user stop wyoming-satellite.service 2>/dev/null || true
+  sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
+    systemctl --user stop nabla-voice-listen.service 2>/dev/null || true
   sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
     systemctl --user stop nabla-voice-ptt.service 2>/dev/null || true
   
@@ -582,7 +594,9 @@ voice_ha_instructions() {
   ip_hint="$(hostname -I 2>/dev/null | awk '{print $1}')"
   [ -z "$ip_hint" ] && ip_hint="<IP-de-esta-Pi>"
   
-  msg "Configuración HA" "En Home Assistant:\n\n1. Settings → Devices & Services\n2. Add Integration → Wyoming\n3. Host: $ip_hint\n   Port: $VOICE_PORT\n\nRequisitos en HA:\n• Add-on Whisper (STT)\n• Add-on Piper (TTS)\n• Assist pipeline configurado\n\nEl satélite aparece como:\n  assist_satellite.$VOICE_NAME"
+  msg "Configuración HA (1/2)" "PASO 1: Añadir el satélite\n\n1. Settings → Devices & Services\n2. Add Integration → Wyoming\n3. Host: $ip_hint\n   Port: $VOICE_PORT\n\nRequisitos en HA:\n• Add-on Whisper (STT)\n• Add-on Piper (TTS)\n• Assist pipeline configurado\n\nEl satélite aparece como:\n  assist_satellite.$VOICE_NAME"
+  
+  msg "Configuración HA (2/2)" "PASO 2: Botón 'Escuchar' en dashboard\n(trigger principal desde el móvil)\n\nEn configuration.yaml:\n\nrest_command:\n  voice_satellite_listen:\n    url: http://$ip_hint:$VOICE_HTTP_PORT/listen\n    method: POST\n\nReinicia HA, luego añade botón:\n\ntype: button\nname: Escuchar\nicon: mdi:microphone\ntap_action:\n  action: call-service\n  service: rest_command.voice_satellite_listen\n\nAhora desde el móvil: toca el botón → la Pi escucha."
 }
 
 menu_voz() {
@@ -597,16 +611,16 @@ menu_voz() {
     
     if have_wt; then
       c=$(whiptail --title "$TITLE · Satélite de Voz" --menu \
-        "Wyoming satellite para Home Assistant Assist.\nMic+altavoz en esta Pi, STT/TTS en HA." 22 76 12 \
+        "Wyoming satellite para Home Assistant Assist.\nPi montada en pared: trigger principal desde el móvil (botón HA).\nGPIO es secundario opcional." 24 78 12 \
         "1" "Instalar / reinstalar satélite" \
         "2" "Modo: $mode_l  [cambiar]" \
         "3" "Nombre satélite: $VOICE_NAME  [cambiar]" \
         "4" "Puerto Wyoming: $VOICE_PORT  [cambiar]" \
-        "5" "GPIO botón (modo button): $VOICE_GPIO  [cambiar]" \
+        "5" "GPIO botón (secundario): $VOICE_GPIO  [cambiar]" \
         "6" "Iniciar servicios" \
         "7" "Detener servicios" \
         "8" "Ver estado" \
-        "9" "Instrucciones para HA" \
+        "9" "★ Instrucciones HA (botón dashboard)" \
         "10" "Volver" \
         3>&1 1>&2 2>&3) || return 0
     else
@@ -620,11 +634,11 @@ menu_voz() {
         if [ "$VOICE_MODE" = "button" ]; then
           VOICE_MODE="wake"
           voice_save
-          msg "Voz" "Modo: Wake word local.\n\nNecesitas Docker con rhasspy/wyoming-openwakeword\nen 127.0.0.1:10400.\n\nPara Pi, recomendamos modo botón."
+          msg "Voz" "Modo: Wake word local (solo desktop).\n\nNecesitas Docker con rhasspy/wyoming-openwakeword\nen 127.0.0.1:10400.\n\nPara Pi, recomendamos modo HTTP (botón HA)."
         else
           VOICE_MODE="button"
           voice_save
-          msg "Voz" "Modo: Botón GPIO (PTT).\n\nConecta un pulsador entre GPIO$VOICE_GPIO y GND.\nAl pulsar, arranca la conversación Assist."
+          msg "Voz" "Modo: HTTP trigger + GPIO opcional.\n\nTrigger principal: botón en dashboard HA (móvil).\nGPIO secundario: pulsador entre GPIO$VOICE_GPIO y GND."
         fi
         ;;
       3)

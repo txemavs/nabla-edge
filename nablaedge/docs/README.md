@@ -11,11 +11,11 @@ Learning-oriented documentation for the NablaEdge system. Each folder covers one
 | [architecture/](architecture/) | Big picture: edge nodes, protocols, data flow |
 | [pi-config-menu/](pi-config-menu/) | The `nabla-config` whiptail menu — how to use and extend it |
 | [network-modes/](network-modes/) | Nabla Net modes: cable, ap, cable-ap, off |
-| [imaging/](imaging/) | `nabla-image`: create bootable SD/USB with first-boot injection |
+| [imaging/](imaging/) | `nabla-image`: create bootable SD/USB with first-boot injection; APT migration |
 | [accessories/](accessories/) | Hardware: OLED, rotary, large SPI + OLED UI paint layer |
 | [esphome-patterns/](esphome-patterns/) | How to build OLED+encoder / BLE mounts (no private fleet YAML) |
 | [ble-mesh/](ble-mesh/) | BLE presence/contagion mesh protocol |
-| [packages-apt/](packages-apt/) | How apt packages and HTTP publishing work |
+| [packages-apt/](packages-apt/) | APT repository install, tarball fallback, publishing workflow |
 | [voice-satellite/](voice-satellite/) | HA Assist voice satellite (stub) |
 | [manuals/](manuals/) | PDF manual shelf and classification guide |
 

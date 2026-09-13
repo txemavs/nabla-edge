@@ -1,0 +1,371 @@
+#!/bin/bash
+# nabla-image v0.4 — NablaEdge SD/USB Imaging Tool
+# Fetches Raspberry Pi OS, injects first-boot scripts, writes to media.
+#
+# SANITIZED REFERENCE COPY — no private URLs or hostnames.
+
+set -e
+
+VERSION="0.4"
+WORK_DIR="/tmp/nabla-image"
+CACHE_DIR="$HOME/.cache/nabla-image"
+
+# Default image source (official Raspberry Pi OS Lite 64-bit)
+DEFAULT_IMAGE_URL="https://downloads.raspberrypi.org/raspios_lite_arm64_latest"
+
+# First-boot package (tarball with scripts + packages)
+# In production, this would be your package mirror URL
+FIRSTBOOT_TARBALL_URL="https://example.local/nabla/firstboot-latest.tar.gz"
+
+# ============================================================================
+# HELPERS
+# ============================================================================
+
+log() {
+    echo "[nabla-image] $*"
+}
+
+error() {
+    echo "[nabla-image] ERROR: $*" >&2
+    exit 1
+}
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        error "This script must be run as root (sudo nabla-image ...)"
+    fi
+}
+
+check_deps() {
+    for cmd in wget xz dd parted; do
+        if ! command -v "$cmd" &>/dev/null; then
+            error "Missing dependency: $cmd"
+        fi
+    done
+}
+
+# ============================================================================
+# DEVICE HANDLING
+# ============================================================================
+
+list_devices() {
+    echo "Available removable devices:"
+    echo
+    lsblk -d -o NAME,SIZE,MODEL,TRAN | grep -E 'usb|mmcblk' || echo "  (no removable devices found)"
+    echo
+    echo "Use: nabla-image --target /dev/sdX"
+}
+
+validate_device() {
+    local device="$1"
+    
+    # Must exist
+    [[ -b "$device" ]] || error "Device not found: $device"
+    
+    # Must not be a partition
+    [[ "$device" =~ [0-9]$ ]] && error "Specify the disk, not a partition: $device"
+    
+    # Must be removable (safety check)
+    local removable=$(cat "/sys/block/$(basename "$device")/removable" 2>/dev/null || echo "0")
+    if [[ "$removable" != "1" ]]; then
+        # Also check if it's an SD card or USB
+        local tran=$(lsblk -no TRAN "$device" 2>/dev/null)
+        if [[ "$tran" != "usb" ]] && [[ ! "$device" =~ mmcblk ]]; then
+            error "Device $device does not appear to be removable. Refusing to write."
+        fi
+    fi
+    
+    # Confirm with user
+    echo "Target device: $device"
+    lsblk "$device"
+    echo
+    read -p "WARNING: ALL DATA ON $device WILL BE ERASED. Continue? [y/N] " confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || exit 0
+}
+
+unmount_device() {
+    local device="$1"
+    log "Unmounting partitions on $device..."
+    for part in "${device}"*; do
+        umount "$part" 2>/dev/null || true
+    done
+}
+
+# ============================================================================
+# IMAGE HANDLING
+# ============================================================================
+
+fetch_image() {
+    local url="$1"
+    local dest="$CACHE_DIR/raspios.img.xz"
+    
+    mkdir -p "$CACHE_DIR"
+    
+    if [[ -f "$dest" ]]; then
+        log "Using cached image: $dest"
+    else
+        log "Downloading Raspberry Pi OS..."
+        wget -O "$dest" "$url" || error "Download failed"
+    fi
+    
+    echo "$dest"
+}
+
+extract_image() {
+    local xz_file="$1"
+    local img_file="${xz_file%.xz}"
+    
+    if [[ -f "$img_file" ]]; then
+        log "Using cached extracted image"
+    else
+        log "Extracting image..."
+        xz -dk "$xz_file" || error "Extraction failed"
+    fi
+    
+    echo "$img_file"
+}
+
+# ============================================================================
+# FIRST-BOOT INJECTION
+# ============================================================================
+
+inject_firstboot() {
+    local img_file="$1"
+    local site="${2:-demo}"
+    
+    log "Injecting first-boot scripts..."
+    
+    mkdir -p "$WORK_DIR"
+    
+    # Mount boot partition (partition 1)
+    local loop_dev=$(losetup -fP --show "$img_file")
+    local boot_mount="$WORK_DIR/boot"
+    mkdir -p "$boot_mount"
+    mount "${loop_dev}p1" "$boot_mount"
+    
+    # Create firstboot directory
+    mkdir -p "$boot_mount/firstboot.d"
+    
+    # Create first-boot scripts
+    cat > "$boot_mount/firstboot.d/01-expand-filesystem.sh" << 'SCRIPT'
+#!/bin/bash
+# Expand root filesystem to fill SD card
+raspi-config --expand-rootfs
+SCRIPT
+
+    cat > "$boot_mount/firstboot.d/02-set-hostname.sh" << SCRIPT
+#!/bin/bash
+# Set hostname based on site
+SITE="$site"
+HOSTNAME="edge-\$(cat /proc/cpuinfo | grep Serial | tail -c 9)"
+hostnamectl set-hostname "\$HOSTNAME"
+SCRIPT
+
+    cat > "$boot_mount/firstboot.d/03-install-packages.sh" << 'SCRIPT'
+#!/bin/bash
+# Install NablaEdge packages from staged tarball
+if [[ -f /boot/nabla/packages.tar.gz ]]; then
+    cd /tmp
+    tar xzf /boot/nabla/packages.tar.gz
+    dpkg -i *.deb || apt-get install -f -y
+fi
+SCRIPT
+
+    cat > "$boot_mount/firstboot.d/04-enable-services.sh" << 'SCRIPT'
+#!/bin/bash
+# Enable NablaEdge services
+systemctl enable nabla-net 2>/dev/null || true
+systemctl enable nabla-oled 2>/dev/null || true
+SCRIPT
+
+    cat > "$boot_mount/firstboot.d/99-cleanup.sh" << 'SCRIPT'
+#!/bin/bash
+# Remove first-boot scripts after execution
+rm -rf /boot/firstboot.d
+rm -f /boot/nabla/packages.tar.gz
+SCRIPT
+
+    chmod +x "$boot_mount/firstboot.d/"*.sh
+    
+    # Create site configuration
+    mkdir -p "$boot_mount/nabla"
+    cat > "$boot_mount/nabla/site.conf" << CONF
+# NablaEdge Site Configuration
+site=$site
+CONF
+
+    # Create firstboot trigger for systemd
+    cat > "$boot_mount/firstboot.txt" << 'TRIGGER'
+# This file triggers first-boot scripts
+# It will be deleted after first boot completes
+TRIGGER
+
+    # Cleanup
+    umount "$boot_mount"
+    losetup -d "$loop_dev"
+    
+    log "First-boot injection complete"
+}
+
+# ============================================================================
+# WRITE IMAGE
+# ============================================================================
+
+write_image() {
+    local img_file="$1"
+    local device="$2"
+    
+    log "Writing image to $device..."
+    log "This may take several minutes..."
+    
+    dd if="$img_file" of="$device" bs=4M status=progress conv=fsync
+    
+    sync
+    
+    log "Write complete!"
+}
+
+verify_write() {
+    local img_file="$1"
+    local device="$2"
+    
+    log "Verifying write..."
+    
+    local img_hash=$(head -c $(stat -c%s "$img_file") "$device" | sha256sum | cut -d' ' -f1)
+    local file_hash=$(sha256sum "$img_file" | cut -d' ' -f1)
+    
+    if [[ "$img_hash" == "$file_hash" ]]; then
+        log "Verification passed!"
+    else
+        error "Verification failed! Image may be corrupted."
+    fi
+}
+
+# ============================================================================
+# OTP USB BOOT
+# ============================================================================
+
+enable_otp() {
+    log "Enabling USB boot OTP for Pi 3B..."
+    
+    # This must be run on a booted Pi 3B
+    if ! grep -q "BCM2837" /proc/cpuinfo 2>/dev/null; then
+        error "OTP can only be enabled on a running Raspberry Pi 3B"
+    fi
+    
+    # Check if already enabled
+    local otp=$(vcgencmd otp_dump | grep "17:")
+    if [[ "$otp" == *"3020000a"* ]]; then
+        log "USB boot OTP already enabled"
+        return
+    fi
+    
+    echo "This will PERMANENTLY enable USB boot on this Pi 3B."
+    echo "This cannot be undone."
+    read -p "Continue? [y/N] " confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || exit 0
+    
+    # Enable OTP
+    echo program_usb_boot_mode=1 | sudo tee -a /boot/config.txt
+    log "OTP flag added to config.txt"
+    log "Reboot to apply, then remove the flag from config.txt"
+}
+
+# ============================================================================
+# CLI
+# ============================================================================
+
+show_help() {
+    cat << EOF
+nabla-image v$VERSION — NablaEdge SD/USB Imaging Tool
+
+USAGE:
+    sudo nabla-image [OPTIONS]
+
+OPTIONS:
+    -h, --help              Show this help
+    -v, --version           Show version
+    -l, --list              List available target devices
+    -t, --target DEVICE     Target device (e.g., /dev/sdb)
+    -s, --site NAME         Site identifier (default: demo)
+    -i, --image URL         Custom image URL
+    --verify                Verify after writing
+    --enable-otp            Enable USB boot OTP on Pi 3B
+    --dry-run               Show what would be done
+
+WORKFLOW:
+    1. Download Raspberry Pi OS (cached for reuse)
+    2. Extract and customize image
+    3. Inject first-boot scripts and packages
+    4. Write to target SD card or USB drive
+
+EXAMPLES:
+    sudo nabla-image --list                     # Show available devices
+    sudo nabla-image --target /dev/sdb          # Write to USB drive
+    sudo nabla-image -t /dev/mmcblk0 -s demo    # Write with site=demo
+    sudo nabla-image --enable-otp               # Enable USB boot on Pi 3B
+
+FIRST-BOOT:
+    On first boot, the Pi will:
+    1. Expand filesystem
+    2. Set hostname
+    3. Install NablaEdge packages
+    4. Enable services
+    5. Clean up first-boot scripts
+
+SEE ALSO:
+    nabla-config(1), nabla-net(1)
+EOF
+}
+
+# Parse arguments
+TARGET=""
+SITE="demo"
+IMAGE_URL="$DEFAULT_IMAGE_URL"
+VERIFY=false
+DRY_RUN=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) show_help; exit 0 ;;
+        -v|--version) echo "nabla-image v$VERSION"; exit 0 ;;
+        -l|--list) list_devices; exit 0 ;;
+        -t|--target) TARGET="$2"; shift 2 ;;
+        -s|--site) SITE="$2"; shift 2 ;;
+        -i|--image) IMAGE_URL="$2"; shift 2 ;;
+        --verify) VERIFY=true; shift ;;
+        --enable-otp) enable_otp; exit 0 ;;
+        --dry-run) DRY_RUN=true; shift ;;
+        *) error "Unknown option: $1" ;;
+    esac
+done
+
+# Main flow
+if [[ -z "$TARGET" ]]; then
+    show_help
+    exit 1
+fi
+
+check_root
+check_deps
+
+if $DRY_RUN; then
+    echo "DRY RUN — would perform:"
+    echo "  1. Download image from: $IMAGE_URL"
+    echo "  2. Inject first-boot for site: $SITE"
+    echo "  3. Write to device: $TARGET"
+    $VERIFY && echo "  4. Verify write"
+    exit 0
+fi
+
+validate_device "$TARGET"
+unmount_device "$TARGET"
+
+XZ_FILE=$(fetch_image "$IMAGE_URL")
+IMG_FILE=$(extract_image "$XZ_FILE")
+inject_firstboot "$IMG_FILE" "$SITE"
+write_image "$IMG_FILE" "$TARGET"
+
+$VERIFY && verify_write "$IMG_FILE" "$TARGET"
+
+log "Done! Remove the media and boot your Pi."

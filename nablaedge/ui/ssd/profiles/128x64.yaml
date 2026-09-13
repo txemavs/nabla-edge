@@ -1,0 +1,85 @@
+# 128×64 OLED Layout Profile
+# Ground truth for SSD1306/SSD1309 displays at 128×64 resolution.
+#
+# Tested hardware:
+#   - Pi node "pi3-109": SSD1306 I2C bus=1 addr=0x3C, luma.oled
+#   - ESP node "tcall-menu": SSD1309 SPI, ESPHome display component
+#
+# Both use identical logical layout; driver differs.
+
+meta:
+  resolution:
+    width: 128
+    height: 64
+  color_depth: 1  # 1-bit monochrome
+
+# Screen region definitions (y_start, height)
+regions:
+  status_bar:
+    y: 0
+    height: 10
+    description: Icons (wifi, bt, alert) + right-aligned clock
+
+  title:
+    y: 10
+    height: 22
+    align: center
+    description: Large primary text, vertically centered in region
+
+  subtitle:
+    y: 32
+    height: 12
+    align: center
+    description: Secondary label or state indicator
+
+  body:
+    y: 44
+    height: 20
+    description: Menu list or auxiliary content (2 visible rows)
+
+layout:
+  margin_h: 2           # Usable width = 124 px
+  usable_width: 124
+
+# Status bar element positions
+status_bar_layout:
+  icon_wifi:
+    x: 2
+    glyph: "▲"          # Or custom bitmap
+  icon_bt:
+    x: 14
+    glyph: "♦"
+  clock:
+    x: 100              # Right-aligned, ~5 chars "HH:MM"
+    format: "%H:%M"
+
+# Title region (home page example)
+home_page:
+  logo:
+    glyph: "◢"          # Nabla triangle approximation
+    x: 40
+    y: 14
+  text:
+    value: "nabla.net"
+    x: 52               # After logo
+    y: 16
+  subtitle:
+    value: "Edge Node"
+    y: 34
+
+# Menu page template
+menu_page:
+  title_from: menu.name   # Pull title from menu protocol state
+  items:
+    start_y: 44
+    row_height: 10
+    visible_count: 2
+    caret_x: 2
+    text_x: 10
+
+# Font mappings (reference tokens.yaml roles)
+fonts:
+  status: font.status     # 8px
+  title: font.title       # 16px
+  subtitle: font.subtitle # 10px
+  body: font.body         # 8px

@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/txemavs/nabla-edge/protocols/menu/schema/menu.schema.json",
+  "title": "nabla.menu/v1 Menu Definition",
+  "description": "JSON Schema for nabla.menu protocol v1 menu definitions",
+  "type": "object",
+  "required": ["version", "site", "menu"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Protocol version (semver)",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9]+)?$"
+    },
+    "site": {
+      "type": "string",
+      "description": "Site identifier",
+      "minLength": 1,
+      "pattern": "^[a-z0-9_-]+$"
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO 8601 generation timestamp",
+      "format": "date-time"
+    },
+    "menu": {
+      "$ref": "#/$defs/menuItem",
+      "description": "Root menu item"
+    },
+    "emergency_menu": {
+      "$ref": "#/$defs/menuItem",
+      "description": "Fallback menu if main menu fails"
+    }
+  },
+  "$defs": {
+    "menuItem": {
+      "type": "object",
+      "required": ["type", "label"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["submenu", "button", "toggle", "number", "info", "back"],
+          "description": "Item type"
+        },
+        "label": {
+          "type": "string",
+          "description": "Display text",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "icon": {
+          "type": "string",
+          "description": "Icon name (device-dependent)"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Categorization tags"
+        },
+        "caps": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Required device capabilities"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "submenu" } } },
+          "then": {
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/menuItem" },
+                "description": "Nested menu items"
+              }
+            },
+            "required": ["items"]
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "button" } } },
+          "then": {
+            "properties": {
+              "action": { "$ref": "#/$defs/action" }
+            },
+            "required": ["action"]
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "toggle" } } },
+          "then": {
+            "properties": {
+              "state_topic": { "type": "string", "description": "MQTT topic for state" },
+              "action_on": { "$ref": "#/$defs/action" },
+              "action_off": { "$ref": "#/$defs/action" }
+            },
+            "required": ["action_on", "action_off"]
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "number" } } },
+          "then": {
+            "properties": {
+              "min": { "type": "number", "description": "Minimum value" },
+              "max": { "type": "number", "description": "Maximum value" },
+              "step": { "type": "number", "description": "Step increment", "default": 1 },
+              "unit": { "type": "string", "description": "Display unit" },
+              "state_topic": { "type": "string", "description": "MQTT topic for state" },
+              "action": { "$ref": "#/$defs/action" }
+            },
+            "required": ["min", "max", "action"]
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "info" } } },
+          "then": {
+            "properties": {
+              "state_topic": { "type": "string", "description": "MQTT topic for state" },
+              "unit": { "type": "string", "description": "Display unit" }
+            }
+          }
+        }
+      ]
+    },
+    "action": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["ha_service", "mqtt", "nabla"],
+          "description": "Action type"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "ha_service" } } },
+          "then": {
+            "properties": {
+              "service": {
+                "type": "string",
+                "description": "HA service (domain.action)",
+                "pattern": "^[a-z_]+\\.[a-z_]+$"
+              },
+              "data": {
+                "type": "object",
+                "description": "Service call data"
+              }
+            },
+            "required": ["service"]
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "mqtt" } } },
+          "then": {
+            "properties": {
+              "topic": {
+                "type": "string",
+                "description": "MQTT topic to publish"
+              },
+              "payload": {
+                "description": "Payload (string or template)"
+              },
+              "payload_template": {
+                "type": "string",
+                "description": "Template for dynamic payload"
+              },
+              "retain": {
+                "type": "boolean",
+                "default": false
+              },
+              "qos": {
+                "type": "integer",
+                "enum": [0, 1, 2],
+                "default": 0
+              }
+            },
+            "required": ["topic"]
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "nabla" } } },
+          "then": {
+            "properties": {
+              "command": {
+                "type": "string",
+                "description": "Internal command",
+                "enum": ["reboot", "refresh_menu", "factory_reset"]
+              }
+            },
+            "required": ["command"]
+          }
+        }
+      ]
+    }
+  }
+}

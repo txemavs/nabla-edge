@@ -1,0 +1,244 @@
+{
+  "version": "1.0.0",
+  "site": "demo",
+  "menu": {
+    "type": "submenu",
+    "label": "Main Menu",
+    "items": [
+      {
+        "type": "submenu",
+        "label": "Kitchen",
+        "icon": "kitchen",
+        "tags": ["kitchen"],
+        "items": [
+          {
+            "type": "button",
+            "label": "Light On",
+            "icon": "lightbulb",
+            "action": {
+              "kind": "ha_service",
+              "service": "light.turn_on",
+              "data": {
+                "entity_id": "switch.example_light"
+              }
+            }
+          },
+          {
+            "type": "button",
+            "label": "Light Off",
+            "icon": "lightbulb_outline",
+            "action": {
+              "kind": "ha_service",
+              "service": "light.turn_off",
+              "data": {
+                "entity_id": "switch.example_light"
+              }
+            }
+          },
+          {
+            "type": "toggle",
+            "label": "Main Light",
+            "icon": "lightbulb",
+            "state_topic": "nabla/esp/demo/kitchen/light/state",
+            "action_on": {
+              "kind": "mqtt",
+              "topic": "nabla/esp/demo/kitchen/light/set",
+              "payload": "ON"
+            },
+            "action_off": {
+              "kind": "mqtt",
+              "topic": "nabla/esp/demo/kitchen/light/set",
+              "payload": "OFF"
+            }
+          },
+          {
+            "type": "number",
+            "label": "Brightness",
+            "icon": "brightness",
+            "min": 0,
+            "max": 100,
+            "step": 10,
+            "unit": "%",
+            "state_topic": "nabla/esp/demo/kitchen/brightness/state",
+            "action": {
+              "kind": "mqtt",
+              "topic": "nabla/esp/demo/kitchen/brightness/set",
+              "payload_template": "{{ value }}"
+            }
+          },
+          {
+            "type": "info",
+            "label": "Temperature",
+            "icon": "thermometer",
+            "state_topic": "nabla/esp/demo/kitchen/temp/state",
+            "unit": "°C"
+          },
+          {
+            "type": "back",
+            "label": "← Back"
+          }
+        ]
+      },
+      {
+        "type": "submenu",
+        "label": "Garage",
+        "icon": "garage",
+        "tags": ["garage"],
+        "items": [
+          {
+            "type": "button",
+            "label": "Open Door",
+            "icon": "garage_open",
+            "action": {
+              "kind": "ha_service",
+              "service": "cover.open_cover",
+              "data": {
+                "entity_id": "cover.example_garage"
+              }
+            }
+          },
+          {
+            "type": "button",
+            "label": "Close Door",
+            "icon": "garage_close",
+            "action": {
+              "kind": "ha_service",
+              "service": "cover.close_cover",
+              "data": {
+                "entity_id": "cover.example_garage"
+              }
+            }
+          },
+          {
+            "type": "toggle",
+            "label": "Garage Light",
+            "state_topic": "nabla/esp/demo/garage/light/state",
+            "action_on": {
+              "kind": "mqtt",
+              "topic": "nabla/esp/demo/garage/light/set",
+              "payload": "ON"
+            },
+            "action_off": {
+              "kind": "mqtt",
+              "topic": "nabla/esp/demo/garage/light/set",
+              "payload": "OFF"
+            }
+          },
+          {
+            "type": "back",
+            "label": "← Back"
+          }
+        ]
+      },
+      {
+        "type": "submenu",
+        "label": "Scenes",
+        "icon": "scene",
+        "tags": ["scenes"],
+        "items": [
+          {
+            "type": "button",
+            "label": "Night Mode",
+            "icon": "moon",
+            "action": {
+              "kind": "ha_service",
+              "service": "scene.turn_on",
+              "data": {
+                "entity_id": "scene.example_night"
+              }
+            }
+          },
+          {
+            "type": "button",
+            "label": "Morning Mode",
+            "icon": "sun",
+            "action": {
+              "kind": "ha_service",
+              "service": "scene.turn_on",
+              "data": {
+                "entity_id": "scene.example_morning"
+              }
+            }
+          },
+          {
+            "type": "button",
+            "label": "All Off",
+            "icon": "power_off",
+            "action": {
+              "kind": "ha_service",
+              "service": "script.turn_on",
+              "data": {
+                "entity_id": "script.example_all_off"
+              }
+            }
+          },
+          {
+            "type": "back",
+            "label": "← Back"
+          }
+        ]
+      },
+      {
+        "type": "submenu",
+        "label": "System",
+        "icon": "settings",
+        "tags": ["system"],
+        "items": [
+          {
+            "type": "info",
+            "label": "Device Status",
+            "state_topic": "nabla/esp/demo/oled01/status"
+          },
+          {
+            "type": "button",
+            "label": "Refresh Menu",
+            "icon": "refresh",
+            "action": {
+              "kind": "nabla",
+              "command": "refresh_menu"
+            }
+          },
+          {
+            "type": "button",
+            "label": "Reboot Device",
+            "icon": "restart",
+            "action": {
+              "kind": "nabla",
+              "command": "reboot"
+            }
+          },
+          {
+            "type": "back",
+            "label": "← Back"
+          }
+        ]
+      }
+    ]
+  },
+  "emergency_menu": {
+    "type": "submenu",
+    "label": "Emergency",
+    "items": [
+      {
+        "type": "info",
+        "label": "Menu Error"
+      },
+      {
+        "type": "button",
+        "label": "Refresh Menu",
+        "action": {
+          "kind": "nabla",
+          "command": "refresh_menu"
+        }
+      },
+      {
+        "type": "button",
+        "label": "Reboot",
+        "action": {
+          "kind": "nabla",
+          "command": "reboot"
+        }
+      }
+    ]
+  }
+}

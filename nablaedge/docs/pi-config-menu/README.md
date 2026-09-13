@@ -70,9 +70,15 @@ nabla-config (Main Menu)
 │   ├── Enable camera     → Toggle camera module
 │   └── Test camera       → Capture test image
 │
-└── Voice
-    ├── Satellite mode    → Enable HA voice satellite
-    └── Wake word         → Configure wake word
+└── Satélite de Voz
+    ├── Instalar          → Install Wyoming satellite + deps
+    ├── Modo              → Toggle button (GPIO PTT) / wake (Docker)
+    ├── Nombre            → Satellite name (HA entity)
+    ├── Puerto            → Wyoming port (default 10700)
+    ├── GPIO botón        → PTT button pin (button mode)
+    ├── Iniciar/Detener   → Start/stop services
+    ├── Estado            → Show service status
+    └── Instrucciones HA  → How to add in Home Assistant
 ```
 
 ---

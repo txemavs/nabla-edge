@@ -1,6 +1,10 @@
-# NablaEdge docs (learning map)
+# ∇ NablaEdge Documentation
 
-One folder per topic so you can open it, see how it works, and change it.
+**Learn HOW to build your own edge network — not where ours are.**
+
+This documentation teaches you to build NablaEdge from scratch. Every concept is explained, every script is readable, every example uses placeholders you replace with your own values.
+
+One folder per topic. Open it, understand how it works, modify it yourself.
 
 | Folder | What you learn |
 |--------|----------------|
@@ -19,10 +23,31 @@ One folder per topic so you can open it, see how it works, and change it.
 
 ## How to Use This Manual
 
-1. **Start with [architecture/](architecture/)** to understand the layers
-2. **Pick a topic folder** — each has a README explaining how it works
-3. **Scripts live in [`../scripts/`](../scripts/)** — sanitized reference copies of `nabla-config`, `nabla-net`, `nabla-image`
-4. **Edit and experiment** — docs are designed to be modified
+```
+Start here ──► architecture/     Understand the 3-layer model
+         │
+         ├──► imaging/           Create your first boot image
+         │
+         ├──► pi-config-menu/    Configure your node
+         │
+         ├──► accessories/       Wire OLED, encoder, etc.
+         │
+         └──► protocols/menu/    Write menus for your devices
+```
+
+1. **Read [architecture/](architecture/)** — understand the layers before building
+2. **Follow the build path** — imaging → config → accessories → menus
+3. **Use the scripts** in [`../scripts/`](../scripts/) as reference or copy them
+4. **Replace placeholders** — `CHANGE_ME`, `192.0.2.x`, `example.local` become your values
+
+### What's NOT Here
+
+- Real IP addresses, hostnames, or SSIDs
+- Site names or locations
+- Credentials or secrets
+- Private infrastructure details
+
+You learn the **method**; you supply the **specifics**.
 
 ---
 

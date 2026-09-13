@@ -1,6 +1,18 @@
-# Imaging — nabla-image
+# ∇ Imaging — nabla-image
 
-How to create bootable SD/USB media with first-boot injection for NablaEdge nodes.
+Create bootable SD/USB media for NablaEdge nodes. One command gives you a ready-to-boot Pi.
+
+---
+
+## What You'll Build
+
+After running `nabla-image`, your SD card or USB drive contains:
+- Raspberry Pi OS (64-bit Lite)
+- First-boot scripts that auto-configure the Pi
+- NablaEdge packages ready to install
+- Your site configuration
+
+**Insert → Power on → Wait 2 minutes → Node is ready.**
 
 ---
 
@@ -243,11 +255,112 @@ rm -f /boot/nabla/packages.tar.gz
 
 ---
 
-## How to Change This
+## Step-by-Step: Your First Image
 
-1. **Add first-boot step**: Create numbered script in `firstboot.d/`
-2. **Change package source**: Modify `03-install-packages.sh`
-3. **Add configuration**: Place files in `/boot/nabla/`
+### Prerequisites
+
+On your imaging machine (Linux/Mac/Pi):
+
+```bash
+# Required tools
+sudo apt install wget xz-utils parted
+
+# Get the imaging script
+cp nablaedge/scripts/nabla-image /usr/local/bin/
+chmod +x /usr/local/bin/nabla-image
+```
+
+### Step 1: Insert Media
+
+Insert SD card or USB drive. Find the device:
+
+```bash
+nabla-image --list
+
+# Output:
+# Available removable devices:
+# NAME   SIZE  MODEL          TRAN
+# sdb    32G   SanDisk USB    usb
+# mmcblk0 16G  SD Card        (internal)
+```
+
+### Step 2: Create Image
+
+```bash
+# Replace /dev/sdX with your device!
+sudo nabla-image --target /dev/sdb --site mysite
+
+# You'll see:
+# [nabla-image] Downloading Raspberry Pi OS...
+# [nabla-image] Extracting image...
+# [nabla-image] Injecting first-boot scripts...
+# [nabla-image] Writing image to /dev/sdb...
+# [nabla-image] Done! Remove the media and boot your Pi.
+```
+
+### Step 3: Boot the Pi
+
+1. Remove media from imaging machine
+2. Insert into Raspberry Pi
+3. Connect power
+4. Wait ~2 minutes for first-boot to complete
+5. Find the Pi on your network (hostname: `edge-XXXXXX`)
+
+### Step 4: Configure
+
+SSH into the Pi and run:
+
+```bash
+sudo nabla-config
+```
+
+---
+
+## Customizing the Image
+
+### Add Your Own First-Boot Script
+
+Create a numbered script (runs in order):
+
+```bash
+# Example: 05-custom-setup.sh
+#!/bin/bash
+# Your custom setup here
+apt install -y your-package
+cp /boot/nabla/my-config /etc/myapp/
+```
+
+Place in the tarball or modify `nabla-image` injection.
+
+### Pre-Configure Network
+
+Create `/boot/nabla/network.conf`:
+
+```ini
+network_mode=ap
+```
+
+Or `/boot/nabla/wifi.conf` for WiFi credentials.
+
+### Add Packages
+
+Build your `.deb` packages and bundle:
+
+```bash
+tar czf packages.tar.gz nabla-*.deb your-package.deb
+# Place in /boot/nabla/ during imaging
+```
+
+---
+
+## How to Modify
+
+| Goal | What to Change |
+|------|----------------|
+| Add first-boot step | Create numbered script in `firstboot.d/` |
+| Change package source | Modify `03-install-packages.sh` |
+| Add configuration | Place files in `/boot/nabla/` |
+| Custom base image | Use `--image URL` with your own |
 
 ---
 

@@ -1,6 +1,23 @@
 # Architecture
 
-NablaEdge system architecture: three network layers, edge node roles, and component relationships.
+∇ NablaEdge system architecture: how to build your own edge network.
+
+This document teaches the **concepts** — how layers connect, what roles nodes play, how data flows. No site-specific details; you provide those when you build.
+
+---
+
+## Build Your Own: What You Need
+
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| Raspberry Pi | 1× Pi 3B+ | Pi 4 (2GB+) or Pi 5 |
+| MicroSD or USB | 16GB | 32GB+ USB 3.0 |
+| OLED Display | — | SSD1306 128×64 I2C |
+| Rotary Encoder | — | KY-040 or EC11 |
+| Network | Ethernet or WiFi | Both (for gateway mode) |
+| MQTT Broker | Any | Mosquitto on Pi or separate |
+
+**Start simple**: One Pi with OLED + encoder. Add more nodes as you learn.
 
 ---
 
@@ -219,12 +236,51 @@ nabla-edge/
 
 ---
 
-## How to Change This
+## Build Path: From Zero to Running
 
-1. **Add a role**: Create service, add to `nabla-config` menu
-2. **Change network**: Modify `nabla-net` modes
-3. **New protocol**: Add to `protocols/` with schema
-4. **Update docs**: Edit this file, keep diagrams current
+```mermaid
+flowchart LR
+    A[1. Read Architecture] --> B[2. Image SD Card]
+    B --> C[3. First Boot]
+    C --> D[4. Run nabla-config]
+    D --> E[5. Connect Accessories]
+    E --> F[6. Create Menus]
+    
+    style A fill:#e3f2fd
+    style B fill:#e3f2fd
+    style C fill:#fff3e0
+    style D fill:#fff3e0
+    style E fill:#e8f5e9
+    style F fill:#e8f5e9
+```
+
+1. **[Architecture](.)** — Understand the layers (you are here)
+2. **[Imaging](../imaging/)** — Create bootable media with `nabla-image`
+3. **First Boot** — Pi auto-configures, installs packages
+4. **[nabla-config](../pi-config-menu/)** — Set network mode, enable accessories
+5. **[Accessories](../accessories/)** — Wire OLED, encoder per GPIO tables
+6. **[Menu Protocol](../../../protocols/menu/)** — Write YAML menus, publish via MQTT
+
+---
+
+## Diagrams
+
+*Hub-and-spoke network diagrams showing generic Site A / Site B topology will be added here.*
+
+<!-- When Dom's JPEGs land:
+![Multi-site topology](diagrams/topology-sites-ab.jpg)
+-->
+
+---
+
+## How to Modify
+
+| Goal | What to Change |
+|------|----------------|
+| Add a node role | Create systemd service, add to `nabla-config` |
+| New network mode | Add `apply_mode_*()` function in `nabla-net` |
+| New protocol | Add folder in `protocols/` with schema |
+| Custom OLED layout | Edit `ui/ssd/profiles/` YAML |
 
 ---
 
@@ -233,3 +289,4 @@ nabla-edge/
 - [../network-modes/](../network-modes/) — How Nabla Net modes work
 - [../imaging/](../imaging/) — Creating boot images
 - [../esphome-patterns/](../esphome-patterns/) — ESP32 device patterns
+- [../accessories/](../accessories/) — GPIO wiring and pin tables

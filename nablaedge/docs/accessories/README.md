@@ -2,7 +2,7 @@
 
 Hardware you can declare on an Edge node (and similar mounts on ESP32).
 
-## Profile flags (`nabla-config` → Accesorios)
+## Profile flags (`nabla-config` → Accessories)
 
 Written to `/etc/nabla-net/accessories.conf`:
 

@@ -22,11 +22,11 @@ See [../packages-apt/](../packages-apt/) for full installation details.
 
 `nabla-config` is an interactive terminal menu (using whiptail/dialog) that configures:
 
-- **Red** (Network) — Nabla Net modes, uplink settings
-- **Medios** (Media) — Audio/video output configuration
-- **Accesorios** (Accessories) — OLED, rotary encoder, large display flags
+- **Network** — Nabla Net modes, uplink settings
+- **Media** — USB/SD imaging for Nabla Pi OS
+- **Accessories** — OLED, rotary encoder, large display flags
 - **Camera** — Camera module settings
-- **Voice** — Voice satellite configuration (HA Assist integration)
+- **Voice Satellite** — Linux Voice Assistant for HA Assist
 
 ---
 
@@ -40,8 +40,9 @@ sudo nabla-config
 nabla-config --help
 
 # Direct submenu access
-sudo nabla-config --network
-sudo nabla-config --accessories
+sudo nabla-config network
+sudo nabla-config accessories
+sudo nabla-config voice
 ```
 
 ---
@@ -50,35 +51,39 @@ sudo nabla-config --accessories
 
 ```
 nabla-config (Main Menu)
-├── Red (Network)
-│   ├── Modo de red       → cable | ap | cable-ap | off
-│   ├── Configurar WiFi   → SSID, password (writes env file)
-│   ├── Estado            → Show current network status
-│   └── Reiniciar red     → Restart networking services
+├── Network
+│   ├── Status            → Show current network status
+│   ├── CABLE             → eth LAN + Tailscale
+│   ├── AP                → SSID Nabla Net
+│   ├── CABLE-AP          → eth + wlan1 AP
+│   └── OFF               → Disable networking
 │
-├── Medios (Media)
-│   ├── Audio output      → HDMI / 3.5mm / USB
-│   └── Display output    → HDMI / composite / none
+├── Media (USB/SD)
+│   ├── Nabla Pi OS full  → Write desktop image to USB/SD
+│   ├── Nabla Pi OS lite  → Write lite image to USB/SD
+│   ├── OTP enabler       → Pi 3B USB boot enabler
+│   ├── List disks        → Show available drives
+│   └── Download image    → Cache base image
 │
-├── Accesorios (Accessories)
-│   ├── OLED display      → Enable/disable, I2C address
-│   ├── Rotary encoder    → Enable/disable, GPIO pins
-│   ├── Large SPI display → Enable/disable SPI display
-│   └── Ver configuración → Show current accessories.conf
+├── Accessories
+│   ├── Small I2C OLED    → Enable/disable
+│   ├── Rotary encoder    → Enable/disable
+│   ├── Large SPI display → Enable/disable
+│   ├── Apply OLED now    → Enable OLED service
+│   └── View profile      → Show accessories.conf
 │
 ├── Camera
-│   ├── Enable camera     → Toggle camera module
-│   └── Test camera       → Capture test image
+│   └── go2rtc            → Camera helper
 │
-└── Satélite de Voz
-    ├── Instalar          → Install Wyoming satellite + deps
-    ├── Modo              → Toggle button (GPIO PTT) / wake (Docker)
-    ├── Nombre            → Satellite name (HA entity)
-    ├── Puerto            → Wyoming port (default 10700)
-    ├── GPIO botón        → PTT button pin (button mode)
-    ├── Iniciar/Detener   → Start/stop services
-    ├── Estado            → Show service status
-    └── Instrucciones HA  → How to add in Home Assistant
+└── Voice Satellite
+    ├── Install / update  → Install LVA via Docker
+    ├── Mode              → button (HA) / wake (continuous)
+    ├── Satellite name    → Name for HA entity
+    ├── Wake word         → hey_jarvis, ok_nabu, etc.
+    ├── ESPHome port      → Default 6053
+    ├── Start / Stop      → Control LVA container
+    ├── View status       → Show LVA status
+    └── HA Instructions   → ESPHome + dashboard button setup
 ```
 
 ---
@@ -94,29 +99,21 @@ Accessory flags file — controls which hardware is enabled:
 # Edit via nabla-config or manually
 
 display_oled=1          # 1=enabled, 0=disabled
-oled_i2c_address=0x3C   # I2C address (0x3C or 0x3D typical)
-oled_i2c_bus=1          # I2C bus number
-
 rotary=1                # Rotary encoder enabled
-rotary_clk=17           # GPIO pin for CLK
-rotary_dt=27            # GPIO pin for DT
-rotary_sw=22            # GPIO pin for switch
-
 display_large=0         # Large SPI display (disabled by default)
 ```
 
-### /etc/nabla-net/network.conf
+### /etc/nabla-edge/voice.conf
 
-Network mode configuration:
+Voice satellite configuration:
 
 ```ini
-# Network mode: cable | ap | cable-ap | off
-mode=cable
+# Voice configuration (Linux Voice Assistant)
 
-# WiFi AP settings (when mode includes 'ap')
-ap_ssid=CHANGE_ME
-ap_password=CHANGE_ME
-ap_channel=6
+MODE=button             # button | wake
+SATELLITE_NAME=demo     # HA entity name
+PORT=6053               # ESPHome port
+WAKE_WORD=hey_jarvis    # Wake word
 ```
 
 ---
@@ -126,43 +123,22 @@ ap_channel=6
 ```mermaid
 flowchart TD
     Start[nabla-config] --> Menu[Whiptail Main Menu]
-    Menu --> |Red| Network[Network Submenu]
-    Menu --> |Accesorios| Accessories[Accessories Submenu]
+    Menu --> |Network| Network[Network Submenu]
+    Menu --> |Accessories| Accessories[Accessories Submenu]
+    Menu --> |Voice| Voice[Voice Submenu]
     
-    Network --> |Modo| SetMode[Write network.conf]
-    SetMode --> Restart[systemctl restart nabla-net]
+    Network --> |Mode| SetMode[Run vpn-mode]
     
     Accessories --> |OLED| SetOLED[Write accessories.conf]
     SetOLED --> RestartOLED[systemctl restart nabla-oled]
+    
+    Voice --> |Install| InstallLVA[Docker Compose up]
 ```
 
 1. User selects menu option via whiptail
 2. Script validates input
-3. Writes to appropriate config file in `/etc/nabla-net/`
-4. Restarts relevant systemd service
-
----
-
-## Adding a New Menu Option
-
-To add a new accessory option:
-
-1. **Edit the menu script** — Add whiptail menu entry
-2. **Add config key** — Define new key in `accessories.conf`
-3. **Handle in service** — Update systemd service to read new flag
-
-Example pattern:
-
-```bash
-# In nabla-config script (pseudocode)
-case $choice in
-    "new_feature")
-        result=$(whiptail --inputbox "Enter value:" 8 40 3>&1 1>&2 2>&3)
-        sed -i "s/^new_feature=.*/new_feature=$result/" /etc/nabla-net/accessories.conf
-        systemctl restart nabla-feature
-        ;;
-esac
-```
+3. Writes to appropriate config file
+4. Restarts relevant service or container
 
 ---
 
@@ -177,8 +153,6 @@ When a USB drive is inserted, nabla-config can trigger a dialog:
 | **Open Files** | Mount and browse the drive |
 | **Nothing** | Ignore the drive |
 
-The dialog uses udev rules to detect insertion and calls `nabla-config --usb-dialog`.
-
 ---
 
 ## Command Line Reference
@@ -188,14 +162,11 @@ nabla-config [OPTIONS]
 
 OPTIONS:
   --help, -h          Show this help message
-  --version           Show version
-  --network           Jump to network submenu
-  --accessories       Jump to accessories submenu
-  --media             Jump to media submenu
-  --camera            Jump to camera submenu
-  --voice             Jump to voice submenu
-  --usb-dialog        Show USB hotplug dialog (called by udev)
-  --status            Print current configuration (non-interactive)
+  network             Jump to network submenu
+  media               Jump to media submenu
+  accessories         Jump to accessories submenu
+  voice               Jump to voice submenu
+  oled                Enable OLED directly
 ```
 
 ---
@@ -204,4 +175,4 @@ OPTIONS:
 
 - [../accessories/](../accessories/) — Hardware flags detail
 - [../network-modes/](../network-modes/) — Network mode concepts
-- [../voice-satellite/](../voice-satellite/) — Voice satellite setup
+- [../voice-satellite/](../voice-satellite/) — Voice satellite setup (LVA)

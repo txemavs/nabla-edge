@@ -16,7 +16,7 @@ Learning-oriented documentation for the NablaEdge system. Each folder covers one
 | [esphome-patterns/](esphome-patterns/) | How to build OLED+encoder / BLE mounts (no private fleet YAML) |
 | [ble-mesh/](ble-mesh/) | BLE presence/contagion mesh protocol |
 | [packages-apt/](packages-apt/) | APT repository install, tarball fallback, publishing workflow |
-| [voice-satellite/](voice-satellite/) | HA Assist voice satellite (Wyoming) — button PTT or wake word |
+| [voice-satellite/](voice-satellite/) | HA Assist voice satellite (LVA) — ESPHome + start_conversation |
 | [manuals/](manuals/) | PDF manual shelf and classification guide |
 
 ---
@@ -45,7 +45,7 @@ nablaedge/docs/
 │   └── pdf/                # Pinouts, stickers, accessory lists
 ├── ble-mesh/               # BLE presence protocol
 ├── packages-apt/           # apt repo and HTTP serving
-├── voice-satellite/        # HA Assist voice satellite (button/wake)
+├── voice-satellite/        # HA Assist voice satellite (LVA via ESPHome)
 └── manuals/                # PDF catalog + classification
     ├── pdf/                # General PDFs
     └── private/            # Index only (binaries on NAS)

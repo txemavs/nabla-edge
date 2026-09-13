@@ -6,7 +6,7 @@ How to create bootable SD/USB media with NablaEdge first-boot injection.
 
 ## Overview
 
-`nabla-image` (called from `nabla-config` → Medios) prepares Raspberry Pi boot media:
+`nabla-image` (called from `nabla-config` → Media) prepares Raspberry Pi boot media:
 
 1. Fetches Raspberry Pi OS image
 2. Writes to SD card or USB drive

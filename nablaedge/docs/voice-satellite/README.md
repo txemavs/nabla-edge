@@ -1,147 +1,53 @@
 # Voice Satellite
 
-A Nabla Edge Pi can become a **wall-mounted conversation point**: mic + speakers talking to Home Assistant Assist via the Wyoming protocol.
+A Nabla Edge Pi can become a **wall-mounted conversation point**: mic + speakers talking to Home Assistant Assist.
 
 ![Voice satellite](diagrams/voice-satellite-generic.jpg)
 
 ---
 
+## Linux Voice Assistant (LVA)
+
+We use **Linux Voice Assistant** from OHF-Voice — the official successor to wyoming-satellite. LVA uses the ESPHome protocol and provides full Assist Satellite features:
+
+| Feature | LVA | Wyoming Satellite (deprecated) |
+|---------|-----|--------------------------------|
+| Protocol | ESPHome (:6053) | Wyoming (:10700) |
+| `start_conversation` | Yes | No |
+| `announce` | Yes | Yes |
+| Wake word | Built-in (microWakeWord) | Separate container |
+| `supported_features` | 3 | 1 |
+
 ## Primary Trigger: HA Dashboard Button
 
-The Pi is typically **wall-mounted** — users shouldn't need to walk up to press a button. The primary way to trigger listening is from your phone:
+Wall-mounted Pi: users trigger from their phone, not by walking to the device.
 
 ```
-[Phone / HA Companion]  →  tap "Listen" button  →  [HA rest_command]  →  [Pi HTTP endpoint]  →  Satellite starts listening
+Phone / HA Companion
+        │
+        │  tap "Listen" button
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Home Assistant                                                  │
+│    assist_satellite.start_conversation                          │
+│    target: assist_satellite.<name>_satellite_assist             │
+└─────────────────────────────────────────────────────────────────┘
+        │
+        │  ESPHome protocol
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Nabla Edge Pi (wall-mounted)                                    │
+│    Linux Voice Assistant :6053                                   │
+│    [Wake word optional]                                          │
+└─────────────────────────────────────────────────────────────────┘
+        │
+        │  Audio pipeline
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Home Assistant                                                  │
+│    Whisper (STT) → Assist Pipeline → Piper (TTS)                │
+└─────────────────────────────────────────────────────────────────┘
 ```
-
-An HTTP endpoint on the Pi (`nabla-voice-listen` on port 10701) accepts triggers from:
-- Home Assistant dashboard buttons
-- HA Companion app on your phone
-- Automations (presence-based, NFC tags, etc.)
-
-**GPIO button** on the Pi is available as an **optional secondary trigger** — handy if your phone isn't out.
-
----
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                         Nabla Edge Pi (wall-mounted)                 │
-│  ┌─────────────┐    ┌──────────────────┐    ┌───────────────┐       │
-│  │   USB Mic   │───▶│ wyoming-satellite │◀───│  USB Speaker  │       │
-│  └─────────────┘    │   :10700          │    └───────────────┘       │
-│                     └────────┬──────────┘                            │
-│                              │                                       │
-│  ┌─────────────────┐         │                                       │
-│  │ nabla-voice-    │─────────┤  ← HTTP trigger from HA dashboard     │
-│  │ listen :10701   │         │                                       │
-│  └─────────────────┘         │                                       │
-│                              │                                       │
-│  ┌─────────────┐             │                                       │
-│  │ GPIO Button │─────────────┘  (optional secondary trigger)         │
-│  └─────────────┘                                                     │
-│                                                                      │
-│  ┌─────────────────┐                                                 │
-│  │ openWakeWord    │  (optional, desktop only, NOT for Pi)           │
-│  │ :10400          │                                                 │
-│  └─────────────────┘                                                 │
-└──────────────────────────────────────────────────────────────────────┘
-                               │
-                               │ Wyoming protocol (TCP)
-                               ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                       Home Assistant                                  │
-│  ┌──────────────┐   ┌────────────┐   ┌────────────┐                  │
-│  │ Wyoming      │   │ Whisper    │   │ Piper TTS  │                  │
-│  │ Integration  │──▶│ (STT)      │──▶│            │                  │
-│  │              │   └────────────┘   └────────────┘                  │
-│  │ assist_      │         │                │                         │
-│  │ satellite.*  │◀────────┴────────────────┘                         │
-│  └──────────────┘                                                    │
-│          │                                                           │
-│          ▼                                                           │
-│  ┌──────────────┐                                                    │
-│  │ Assist       │  Intent recognition + action execution             │
-│  │ Pipeline     │                                                    │
-│  └──────────────┘                                                    │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-### Split of Concerns
-
-| Component | Location | Role |
-|-----------|----------|------|
-| Microphone + Speaker | Edge Pi | Audio I/O only |
-| HTTP listen endpoint | Edge Pi :10701 | Receives trigger from HA dashboard |
-| Wyoming satellite | Edge Pi :10700 | Bridge audio ↔ Wyoming protocol |
-| STT (Whisper) | Home Assistant | Speech-to-text |
-| TTS (Piper) | Home Assistant | Text-to-speech |
-| Assist pipeline | Home Assistant | Intent recognition + execution |
-
-**Camera is a separate concern** — do not conflate go2rtc (video) with voice.
-
----
-
-## Triggering Methods
-
-### 1. HA Dashboard Button (Primary — Recommended)
-
-Add a button to your HA dashboard that you can tap from your phone.
-
-**Step 1: Add rest_command to `configuration.yaml`:**
-
-```yaml
-rest_command:
-  voice_satellite_listen:
-    url: "http://192.0.2.10:10701/listen"
-    method: POST
-```
-
-Replace `192.0.2.10` with your Pi's IP or hostname.
-
-**Step 2: Create a button card on your dashboard:**
-
-```yaml
-type: button
-name: "Listen"
-icon: mdi:microphone
-tap_action:
-  action: call-service
-  service: rest_command.voice_satellite_listen
-```
-
-Now tap the button from anywhere (phone, tablet, wall tablet) to make the Pi start listening.
-
-### 2. GPIO Button (Optional Secondary)
-
-If you also want a physical button on the Pi (handy when phone isn't out):
-
-- Wire a momentary button between GPIO pin and GND
-- Enable the PTT service: `systemctl --user enable --now nabla-voice-ptt`
-
-### 3. Wake Word (Desktop Only)
-
-On powerful hosts (not Pi), you can use local openWakeWord for hands-free activation. **Not recommended for Pi 3/4** due to CPU load.
-
-### 4. Presence-Based Automation (Future/Optional)
-
-You could create an automation that shows/enables the listen button only when you're home:
-
-```yaml
-# Example automation idea (not auto-enabled)
-automation:
-  - alias: "Show voice button when home"
-    trigger:
-      - platform: state
-        entity_id: person.txema
-        to: "home"
-    action:
-      - service: input_boolean.turn_on
-        entity_id: input_boolean.show_voice_button
-```
-
-This is just an example pattern — implement based on your needs. **Do not auto-listen without explicit user action.**
 
 ---
 
@@ -151,35 +57,69 @@ This is just an example pattern — implement based on your needs. **Do not auto
 
 ```bash
 sudo nabla-config
-# → Satélite de voz → Instalar
+# → Voice Satellite → Install / update LVA
 ```
-
-The menu lets you:
-
-- Install the satellite
-- Set satellite name and ports
-- Start/stop services
-- View HA setup instructions
 
 ### Manual Installation
 
 ```bash
-# Run the installer
-sudo /opt/nabla-edge/voice/install-voice-satellite.sh
+# Requires Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
 
-# For desktop wake mode (optional):
-sudo /opt/nabla-edge/voice/install-voice-satellite.sh --mode wake
+# Install LVA
+sudo /opt/nabla-edge/voice/install-lva.sh --name demo --wake hey_jarvis
 ```
 
 The installer:
-
-1. Creates Python venv at `/opt/nabla-edge/voice/venv`
-2. Installs `wyoming-satellite` via pip
-3. Creates systemd user services:
-   - `wyoming-satellite.service` — the satellite itself
-   - `nabla-voice-listen.service` — HTTP endpoint (primary trigger)
-   - `nabla-voice-ptt.service` — GPIO button (optional, not auto-enabled)
+1. Downloads Docker Compose files from OHF-Voice/linux-voice-assistant
+2. Creates `/opt/nabla-edge/voice/lva/` with configuration
+3. Starts the LVA container
 4. Writes config to `/etc/nabla-edge/voice.conf`
+
+---
+
+## Home Assistant Setup
+
+### Step 1: Add via ESPHome Integration
+
+1. **Settings → Devices & Services → Add Integration**
+2. Search **ESPHome**
+3. **Host:** `<Pi-IP-or-hostname>` (e.g., `192.0.2.10` or Tailscale IP)
+4. **Port:** `6053`
+
+The satellite appears as `assist_satellite.<name>_satellite_assist` with `supported_features: 3`.
+
+### Step 2: Dashboard Listen Button
+
+Add a button to trigger `start_conversation`:
+
+```yaml
+type: button
+name: Listen
+icon: mdi:microphone
+tap_action:
+  action: call-service
+  service: assist_satellite.start_conversation
+  target:
+    entity_id: assist_satellite.demo_satellite_assist
+  data:
+    start_message: ""
+```
+
+With optional greeting:
+
+```yaml
+data:
+  start_message: "Yes?"
+```
+
+### Step 3: Configure Assist Pipeline
+
+1. **Settings → Voice assistants**
+2. Create or edit a pipeline
+3. Set **Speech-to-text** (Whisper), **Text-to-speech** (Piper)
+4. Assign the pipeline to the satellite via the select entity
 
 ---
 
@@ -188,152 +128,76 @@ The installer:
 **Config file:** `/etc/nabla-edge/voice.conf`
 
 ```bash
-# Mode: button (with optional GPIO) or wake (desktop only)
+# Mode: button (start_conversation) or wake (continuous wake word)
 MODE=button
 
-# Satellite name (appears in HA as assist_satellite.<name>)
+# Satellite name (appears as assist_satellite.<name>_satellite_assist)
 SATELLITE_NAME=demo
 
-# Wyoming satellite port
-PORT=10700
+# ESPHome port
+PORT=6053
 
-# HTTP listen endpoint port (primary trigger)
-LISTEN_HTTP_PORT=10701
-
-# GPIO pin for optional physical button (BCM numbering)
-GPIO_PIN=17
-
-# Wake word name (wake mode only, desktop)
+# Wake word (when MODE=wake)
+# Available: hey_jarvis, ok_nabu, alexa, hey_mycroft
 WAKE_WORD=hey_jarvis
 
-# Audio devices (auto-detected if empty)
-MIC_DEVICE=
-SPK_DEVICE=
-
-# Wake word server URI (wake mode only)
-WAKE_URI=tcp://127.0.0.1:10400
+# Optional GPIO button for physical trigger
+GPIO_PIN=17
 ```
 
 ---
 
-## Home Assistant Setup
-
-### Prerequisites
-
-Install these add-ons in Home Assistant:
-
-1. **Whisper** — Speech-to-text (local or Faster Whisper)
-2. **Piper** — Text-to-speech
-3. **Wyoming protocol** — Already part of core HA
-
-### Step 1: Add the Satellite
-
-1. **Settings → Devices & Services → Add Integration**
-2. Search **Wyoming**
-3. **Host:** `<Pi-IP-or-hostname>` (e.g., `edge01.local` or `192.0.2.10`)
-4. **Port:** `10700`
-
-The satellite appears as `assist_satellite.<name>` (e.g., `assist_satellite.demo`).
-
-### Step 2: Add the Listen Button (Primary Trigger)
-
-**In `configuration.yaml`:**
-
-```yaml
-rest_command:
-  voice_satellite_listen:
-    url: "http://192.0.2.10:10701/listen"
-    method: POST
-```
-
-Restart HA, then add a button to your dashboard:
-
-```yaml
-type: button
-name: "Listen"
-icon: mdi:microphone
-show_name: true
-show_icon: true
-tap_action:
-  action: call-service
-  service: rest_command.voice_satellite_listen
-```
-
-**Alternative: shell_command** (if rest_command doesn't work):
-
-```yaml
-shell_command:
-  voice_satellite_listen: "curl -X POST http://192.0.2.10:10701/listen"
-```
-
-### Step 3: Configure Assist Pipeline
-
-1. **Settings → Voice assistants**
-2. Create or edit a pipeline
-3. Set **Conversation agent**, **Speech-to-text** (Whisper), **Text-to-speech** (Piper)
-4. Assign the pipeline to the satellite device
-
----
-
-## Services
-
-Services run as **systemd user units** (not system services).
+## Managing LVA
 
 ```bash
-# Start services
-systemctl --user start wyoming-satellite
-systemctl --user start nabla-voice-listen
-
-# Optional: enable GPIO button
-systemctl --user enable --now nabla-voice-ptt
-
-# Check status
-systemctl --user status wyoming-satellite
-systemctl --user status nabla-voice-listen
-
 # View logs
-journalctl --user -u wyoming-satellite -f
-journalctl --user -u nabla-voice-listen -f
+cd /opt/nabla-edge/voice/lva
+docker compose logs -f
 
-# Enable at boot
-systemctl --user enable wyoming-satellite
-systemctl --user enable nabla-voice-listen
+# Restart
+docker compose restart
 
-# Services persist across reboots via loginctl linger
-loginctl enable-linger $USER
+# Stop
+docker compose down
+
+# Start
+docker compose up -d
+
+# Update to latest
+docker compose pull
+docker compose up -d
 ```
 
 ---
 
-## Testing the HTTP Endpoint
+## Modes
 
-```bash
-# From any machine on your network:
-curl http://192.0.2.10:10701/listen
+### Button Mode (Recommended for Pi)
 
-# Check health:
-curl http://192.0.2.10:10701/health
+Primary trigger is HA `start_conversation` called from phone dashboard. Wake word disabled to save CPU.
 
-# Expected response:
-# {"success": true, "message": "Satellite triggered - listening started"}
-```
+### Wake Mode (Optional)
+
+Continuous wake word detection using microWakeWord. Uses more CPU but enables hands-free activation.
+
+Available wake words: `hey_jarvis`, `ok_nabu`, `alexa`, `hey_mycroft`
 
 ---
 
 ## Troubleshooting
 
-### Listen button doesn't work
+### LVA not connecting to HA
 
 ```bash
-# Check HTTP endpoint is running
-curl http://pi-ip:10701/health
+# Check LVA is running
+docker ps | grep linux-voice-assistant
 
-# Check satellite is running
-systemctl --user status wyoming-satellite
+# Check port is listening
+ss -tlnp | grep 6053
 
-# Check firewall allows ports
-sudo ufw allow 10700/tcp
-sudo ufw allow 10701/tcp
+# View LVA logs
+cd /opt/nabla-edge/voice/lva
+docker compose logs -f
 ```
 
 ### No audio
@@ -347,32 +211,18 @@ aplay -L
 arecord -d 5 -r 16000 -c 1 -f S16_LE test.wav
 aplay test.wav
 
-# Set specific device in voice.conf
-MIC_DEVICE=plughw:1,0
-SPK_DEVICE=plughw:1,0
+# Check PipeWire/PulseAudio
+pactl info
 ```
 
-### GPIO button not working (optional secondary trigger)
+### start_conversation not working
 
-```bash
-# Ensure service is enabled
-systemctl --user enable --now nabla-voice-ptt
+Verify the entity has `supported_features: 3`:
 
-# Test GPIO
-python3 -c "from gpiozero import Button; b=Button(17); print('Press button...'); b.wait_for_press(); print('OK')"
-
-# Check logs
-journalctl --user -u nabla-voice-ptt -f
-```
-
-### Satellite not connecting to HA
-
-```bash
-# Check satellite is listening
-ss -tlnp | grep 10700
-
-# Test Wyoming connection (from HA host)
-nc -zv <pi-ip> 10700
+```yaml
+# In HA Developer Tools → States
+# Search: assist_satellite.demo_satellite_assist
+# Check: supported_features = 3
 ```
 
 ---
@@ -381,38 +231,21 @@ nc -zv <pi-ip> 10700
 
 ### USB Audio
 
-Recommended USB audio adapters (mic + speaker):
-
 - **Jabra Speak 510** — Good mic, speaker, mute button
-- **Generic USB sound card** + lavalier mic + powered speaker
-- **ReSpeaker USB Array** — 4-mic array, good for far-field
+- **Generic USB sound card** + mic + powered speaker
+- **ReSpeaker USB Array** — 4-mic array for far-field
 
-### GPIO Button (Optional)
+### Audio Server
 
-Any momentary push button works:
+LVA requires PipeWire or PulseAudio. On Raspberry Pi OS:
 
-- Connect between GPIO pin and GND
-- Internal pull-up is enabled (no external resistor needed)
-- Common GPIO pins: 17, 27, 22, 23, 24
+```bash
+# PipeWire (recommended)
+sudo apt install pipewire pipewire-pulse wireplumber
 
----
-
-## Why No Continuous Wake Word on Pi?
-
-| Mode | CPU (Pi 3B) | CPU (Pi 4) | Notes |
-|------|-------------|------------|-------|
-| HTTP trigger | ~0% idle | ~0% idle | Waiting for request |
-| GPIO PTT | ~0% idle | ~0% idle | Waiting for button |
-| Wake word | **Not viable** | 15-30% | openWakeWord is too heavy |
-| Satellite active | 5-15% | 2-5% | During conversation only |
-
-**Pi 3B:** Cannot run continuous wake-word detection. Use HTTP trigger (primary) + optional GPIO button.
-
-**Pi 4:** HTTP trigger recommended. Wake mode possible but impacts other tasks.
-
-**Desktop/NUC:** Wake mode works well if hands-free is needed.
-
-Streaming mic audio over Tailscale to a remote openWakeWord was tried and rejected (fragile, latency issues). Use local triggers instead.
+# Enable for headless operation
+loginctl enable-linger $USER
+```
 
 ---
 
@@ -421,22 +254,8 @@ Streaming mic audio over Tailscale to a remote openWakeWord was tried and reject
 | Path | Description |
 |------|-------------|
 | `/etc/nabla-edge/voice.conf` | Configuration |
-| `/opt/nabla-edge/voice/venv/` | Python virtual environment |
-| `/opt/nabla-edge/voice/nabla-voice-listen` | HTTP listen endpoint |
-| `/opt/nabla-edge/voice/nabla-voice-ptt` | GPIO PTT script (optional) |
-| `~/.config/systemd/user/wyoming-satellite.service` | Satellite service |
-| `~/.config/systemd/user/nabla-voice-listen.service` | HTTP endpoint service |
-| `~/.config/systemd/user/nabla-voice-ptt.service` | PTT service (optional) |
-
----
-
-## Known Limitations
-
-1. **Wyoming doesn't support `assist_satellite.start_conversation`** — The HA service exists but Wyoming satellite never implemented it. We work around this by sending a Wyoming detection event via our HTTP endpoint.
-
-2. **No webrtc/silero by default** — These extras can cause SIGILL on older CPUs. Install manually if needed: `pip install wyoming-satellite[webrtc]`
-
-3. **User services, not system** — Services run under the logged-in user, not root. This avoids audio permission issues but requires `loginctl enable-linger`.
+| `/opt/nabla-edge/voice/lva/` | Docker Compose files |
+| `/opt/nabla-edge/voice/lva/.env` | LVA environment variables |
 
 ---
 
@@ -444,6 +263,5 @@ Streaming mic audio over Tailscale to a remote openWakeWord was tried and reject
 
 - [`../../voice/`](../../voice/) — Voice module scripts
 - [`../pi-config-menu/`](../pi-config-menu/) — nabla-config usage
-- [Wyoming Satellite docs](https://github.com/rhasspy/wyoming-satellite)
-- [Linux Voice Assistant](https://github.com/OHF-Voice/linux-voice-assistant) — Wyoming successor with native `start_conversation` support
+- [OHF-Voice/linux-voice-assistant](https://github.com/OHF-Voice/linux-voice-assistant)
 - [Home Assistant Assist](https://www.home-assistant.io/voice_control/)

@@ -1,42 +1,24 @@
-# Nabla Edge Voice Satellite Configuration
+# Nabla Edge Voice Satellite Configuration (Linux Voice Assistant)
 # Copy to /etc/nabla-edge/voice.conf and customize
 #
 # See: nablaedge/docs/voice-satellite/README.md
 
-# Mode: button (GPIO PTT) or wake (local openWakeWord)
-# - button: Physical button triggers conversation (recommended for Pi)
-# - wake: Local wake-word detection via Docker openWakeWord
+# Mode: button (HA start_conversation) or wake (local wake word)
+# - button: Trigger via HA dashboard button (recommended for wall-mounted Pi)
+# - wake: Continuous wake word detection (uses more CPU)
 MODE=button
 
-# Satellite name (appears in HA as assist_satellite.<name>)
+# Satellite name (appears in HA as assist_satellite.<name>_satellite_assist)
 SATELLITE_NAME=demo
 
-# Home Assistant connection (for button mode PTT trigger)
-# The satellite itself connects via Wyoming protocol on PORT
-HA_URL=https://example.invalid
-HA_TOKEN_FILE=/etc/nabla-edge/ha-token
+# ESPHome port (default 6053)
+# HA adds via ESPHome integration using this port
+PORT=6053
 
-# GPIO pin for PTT button (BCM numbering)
-# Common: GPIO17, GPIO27, GPIO22
-GPIO_PIN=17
-
-# Wake word name (wake mode only)
+# Wake word name (when MODE=wake)
 # Available: hey_jarvis, ok_nabu, alexa, hey_mycroft
 WAKE_WORD=hey_jarvis
 
-# Wyoming satellite port (default 10700)
-PORT=10700
-
-# HTTP listen endpoint port (default 10701)
-# This is the primary trigger for HA dashboard / phone
-LISTEN_HTTP_PORT=10701
-
-# Audio devices (auto-detected if empty)
-# Use 'arecord -L' / 'aplay -L' to list
-# Format: plughw:CARD,DEV or pulse device name
-MIC_DEVICE=
-SPK_DEVICE=
-
-# Advanced: wake word server (wake mode)
-# Default: tcp://127.0.0.1:10400 (local Docker openWakeWord)
-WAKE_URI=tcp://127.0.0.1:10400
+# GPIO pin for optional physical button (BCM numbering)
+# Connect between GPIO pin and GND for manual trigger
+GPIO_PIN=17

@@ -205,7 +205,6 @@ menu_media() {
         hn="$(ask_input "Hostname" "Name for the new Pi:" "edge")" || continue
         oct="$(ask_input "Octet" "Subnet 10.100.N.0/24 — N:" "3")" || continue
         msg "Writing" "Writing desktop to $dev…\nThis may take a while (download + dd).\nCheck terminal if SSH."
-        # leave whiptail; show progress on tty
         clear 2>/dev/null || true
         if run_image write-usb "$dev" --desktop --hostname "$hn" --octeto "$oct"; then
           msg "OK" "Nabla Pi OS (desktop) on $dev.\nBoot the Pi: first-boot installs Edge."
@@ -399,7 +398,6 @@ menu_accessories() {
 
 enable_camera() {
   need_root
-  # reuse nabla-net if present
   local nn
   nn="$(command -v nabla-net 2>/dev/null || true)"
   [ -x "$nn" ] || nn="$REAL_HOME/bin/nabla-net"
@@ -421,7 +419,7 @@ enable_oled() {
     msg "OLED" "Cannot find nabla-oled-enable.\nReinstall Nabla Edge."
     return 1
   fi
-  if ! ask_yes "OLED I2C" "Enable I2C OLED (SSD1306)?\n\nPins: VCC 3.3V, GND, SDA=GPIO2, SCL=GPIO3\nShows: ∇ + nabla.net + time\n\nMay require reboot if I2C was not active."; then
+  if ! ask_yes "OLED I2C" "Enable I2C OLED (SSD1306)?\n\nPins: VCC 3.3V, GND, SDA=GPIO2, SCL=GPIO3\nShows: nabla.net + time\n\nMay require reboot if I2C was not active."; then
     return 0
   fi
   clear 2>/dev/null || true
@@ -440,27 +438,24 @@ oled_status() {
   fi
 }
 
-# --- Voice satellite helpers ---
+# --- Voice satellite helpers (Linux Voice Assistant) ---
 VOICE_CONF="/etc/nabla-edge/voice.conf"
-VOICE_INSTALLER="/opt/nabla-edge/voice/install-voice-satellite.sh"
+VOICE_INSTALLER="/opt/nabla-edge/voice/install-lva.sh"
+LVA_DIR="/opt/nabla-edge/voice/lva"
 
 voice_load() {
   VOICE_MODE="button"
   VOICE_NAME="$(hostname -s 2>/dev/null || echo edge)"
-  VOICE_PORT=10700
-  VOICE_HTTP_PORT=10701
+  VOICE_PORT=6053
   VOICE_GPIO=17
-  VOICE_HA_URL=""
   VOICE_WAKE_WORD="hey_jarvis"
   if [ -f "$VOICE_CONF" ]; then
     # shellcheck disable=SC1090
     . "$VOICE_CONF"
     VOICE_MODE="${MODE:-button}"
     VOICE_NAME="${SATELLITE_NAME:-$VOICE_NAME}"
-    VOICE_PORT="${PORT:-10700}"
-    VOICE_HTTP_PORT="${LISTEN_HTTP_PORT:-10701}"
+    VOICE_PORT="${PORT:-6053}"
     VOICE_GPIO="${GPIO_PIN:-17}"
-    VOICE_HA_URL="${HA_URL:-}"
     VOICE_WAKE_WORD="${WAKE_WORD:-hey_jarvis}"
   fi
 }
@@ -469,123 +464,141 @@ voice_save() {
   need_root
   install -d -m 755 /etc/nabla-edge
   cat > "$VOICE_CONF" <<EOF
-# Nabla Edge Voice Satellite Configuration
+# Nabla Edge Voice Satellite Configuration (Linux Voice Assistant)
 # Managed by nabla-config
 
 MODE=$VOICE_MODE
 SATELLITE_NAME=$VOICE_NAME
-HA_URL=${VOICE_HA_URL:-https://example.invalid}
-HA_TOKEN_FILE=/etc/nabla-edge/ha-token
 GPIO_PIN=$VOICE_GPIO
 WAKE_WORD=$VOICE_WAKE_WORD
 PORT=$VOICE_PORT
-LISTEN_HTTP_PORT=$VOICE_HTTP_PORT
-MIC_DEVICE=
-SPK_DEVICE=
-WAKE_URI=tcp://127.0.0.1:10400
 EOF
   chmod 644 "$VOICE_CONF"
 }
 
 voice_status() {
-  local sat_active listen_active ptt_active
-  sat_active="inactive"
-  listen_active="inactive"
-  ptt_active="inactive"
-  # Check user service (as the real user, not root)
-  if sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$(id -u "$OWNER")" \
-     systemctl --user is-active wyoming-satellite.service >/dev/null 2>&1; then
-    sat_active="active"
+  local lva_running=""
+  
+  # Check Docker container
+  if command -v docker &>/dev/null; then
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'linux-voice-assistant'; then
+      lva_running="running (Docker)"
+    elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q 'linux-voice-assistant'; then
+      lva_running="stopped (Docker)"
+    fi
   fi
-  if sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$(id -u "$OWNER")" \
-     systemctl --user is-active nabla-voice-listen.service >/dev/null 2>&1; then
-    listen_active="active"
-  fi
-  if sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$(id -u "$OWNER")" \
-     systemctl --user is-active nabla-voice-ptt.service >/dev/null 2>&1; then
-    ptt_active="active"
+  
+  # Check systemd service
+  if [ -z "$lva_running" ]; then
+    if systemctl is-active linux-voice-assistant.service >/dev/null 2>&1; then
+      lva_running="running (systemd)"
+    elif systemctl list-unit-files linux-voice-assistant.service >/dev/null 2>&1; then
+      lva_running="stopped (systemd)"
+    else
+      lva_running="not installed"
+    fi
   fi
   
   voice_load
   local mode_label
   case "$VOICE_MODE" in
-    button) mode_label="HTTP + optional GPIO" ;;
+    button) mode_label="HA start_conversation (primary)" ;;
     wake) mode_label="Local wake word" ;;
     *) mode_label="$VOICE_MODE" ;;
   esac
   
   printf 'Mode:            %s\n' "$mode_label"
   printf 'Name:            %s\n' "$VOICE_NAME"
-  printf 'Wyoming port:    %s\n' "$VOICE_PORT"
-  printf 'HTTP port:       %s\n' "$VOICE_HTTP_PORT"
-  printf '\nServices:\n'
-  printf '  Satellite:     %s\n' "$sat_active"
-  printf '  HTTP listen:   %s  (primary trigger)\n' "$listen_active"
+  printf 'ESPHome port:    %s\n' "$VOICE_PORT"
+  printf 'Wake word:       %s\n' "$VOICE_WAKE_WORD"
+  printf 'LVA status:      %s\n' "$lva_running"
   if [ "$VOICE_MODE" = "button" ]; then
-    printf '  GPIO PTT:      %s  (optional secondary)\n' "$ptt_active"
-    printf '\nGPIO button:     %s\n' "$VOICE_GPIO"
-  else
-    printf '  Wake word:     %s\n' "$VOICE_WAKE_WORD"
+    printf 'GPIO button:     %s (optional)\n' "$VOICE_GPIO"
   fi
   printf '\nConfig: %s\n' "$VOICE_CONF"
 }
 
 voice_install() {
   need_root
-  if [ ! -f "$VOICE_INSTALLER" ]; then
-    # Try finding it in the source tree (for development)
-    local alt="/workspace/nablaedge/voice/install-voice-satellite.sh"
-    [ -f "$alt" ] && VOICE_INSTALLER="$alt"
-  fi
-  if [ ! -f "$VOICE_INSTALLER" ]; then
-    msg "Voice" "Cannot find installer:\n$VOICE_INSTALLER\n\nReinstall Nabla Edge."
+  
+  # Check for Docker
+  if ! command -v docker &>/dev/null; then
+    msg "Voice" "Docker is required for Linux Voice Assistant.\n\nInstall Docker first:\n  curl -fsSL https://get.docker.com | sh\n  sudo usermod -aG docker $OWNER"
     return 1
   fi
   
   voice_load
   
-  if ! ask_yes "Install satellite" \
-    "Install Wyoming satellite for Home Assistant Assist.\n\nMode: $VOICE_MODE\nName: $VOICE_NAME\nPort: $VOICE_PORT\n\nRequires Python 3, pip, ALSA.\nContinue?"; then
+  if ! ask_yes "Install LVA" \
+    "Install Linux Voice Assistant (LVA) for Home Assistant.\n\nLVA uses ESPHome protocol (port 6053).\nHA adds it via ESPHome integration.\nSupports: announce, start_conversation, wake words.\n\nName: $VOICE_NAME\nWake word: $VOICE_WAKE_WORD\n\nContinue?"; then
     return 0
   fi
   
   clear 2>/dev/null || true
-  if "$VOICE_INSTALLER" --mode "$VOICE_MODE" --name "$VOICE_NAME" --port "$VOICE_PORT"; then
-    msg "Voice" "Satellite installed.\n\nNext steps:\n1. Start services (option 6)\n2. In HA: Wyoming → host:$VOICE_PORT\n3. Add 'Listen' button to dashboard\n   (see option 9: HA Instructions)\n\nDashboard button is the primary trigger.\nGPIO is optional secondary."
-  else
-    msg "Voice" "Installation failed. Check terminal / logs."
-  fi
+  
+  # Create LVA directory
+  mkdir -p "$LVA_DIR"
+  cd "$LVA_DIR"
+  
+  # Download latest docker-compose and .env
+  local lva_version
+  lva_version=$(curl -s https://api.github.com/repos/OHF-Voice/linux-voice-assistant/releases/latest | grep -oP '"tag_name": "\K[^"]+' || echo "latest")
+  
+  echo "Downloading LVA $lva_version..."
+  curl -fsSL "https://raw.githubusercontent.com/OHF-Voice/linux-voice-assistant/refs/tags/$lva_version/docker-compose.yml" -o docker-compose.yml || \
+    curl -fsSL "https://raw.githubusercontent.com/OHF-Voice/linux-voice-assistant/main/docker-compose.yml" -o docker-compose.yml
+  
+  curl -fsSL "https://raw.githubusercontent.com/OHF-Voice/linux-voice-assistant/refs/tags/$lva_version/.env.example" -o .env.example || \
+    curl -fsSL "https://raw.githubusercontent.com/OHF-Voice/linux-voice-assistant/main/.env.example" -o .env.example
+  
+  # Create .env with our settings
+  cat > .env <<EOF
+# Linux Voice Assistant configuration
+# Generated by nabla-config
+
+LVA_NAME=$VOICE_NAME
+LVA_WAKE_WORD=$VOICE_WAKE_WORD
+LVA_PORT=$VOICE_PORT
+
+# Audio (auto-detected, or set explicitly)
+# LVA_AUDIO_DEVICE=default
+# LVA_SPEAKER_DEVICE=default
+EOF
+  
+  # Pull and start
+  echo "Pulling LVA Docker image..."
+  docker compose pull
+  
+  echo "Starting LVA..."
+  docker compose up -d
+  
+  voice_save
+  
+  msg "Voice" "Linux Voice Assistant installed!\n\nNext steps:\n1. In HA: Add ESPHome integration\n   Host: $(hostname -I | awk '{print $1}')\n   Port: $VOICE_PORT\n\n2. Entity: assist_satellite.$VOICE_NAME\n   supports start_conversation + announce\n\n3. Add dashboard button to trigger\n   assist_satellite.start_conversation\n\nSee option 9 for details."
 }
 
 voice_start() {
   need_root
-  local uid
-  uid="$(id -u "$OWNER")"
   
-  sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
-    systemctl --user start wyoming-satellite.service 2>/dev/null || true
-  
-  # HTTP listen endpoint is the primary trigger
-  sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
-    systemctl --user start nabla-voice-listen.service 2>/dev/null || true
-  
-  voice_load
-  msg "Voice" "Services started.\n\nSatellite: $(sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user is-active wyoming-satellite 2>/dev/null || echo '?')\nHTTP listen: $(sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user is-active nabla-voice-listen 2>/dev/null || echo '?')\n\nGPIO PTT (optional): systemctl --user start nabla-voice-ptt"
+  if [ -d "$LVA_DIR" ] && [ -f "$LVA_DIR/docker-compose.yml" ]; then
+    cd "$LVA_DIR"
+    docker compose up -d
+    msg "Voice" "LVA started.\n\nCheck: docker compose logs -f"
+  else
+    msg "Voice" "LVA not installed.\nUse option 1 to install."
+  fi
 }
 
 voice_stop() {
   need_root
-  local uid
-  uid="$(id -u "$OWNER")"
   
-  sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
-    systemctl --user stop wyoming-satellite.service 2>/dev/null || true
-  sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
-    systemctl --user stop nabla-voice-listen.service 2>/dev/null || true
-  sudo -u "$OWNER" XDG_RUNTIME_DIR="/run/user/$uid" \
-    systemctl --user stop nabla-voice-ptt.service 2>/dev/null || true
-  
-  msg "Voice" "Services stopped."
+  if [ -d "$LVA_DIR" ] && [ -f "$LVA_DIR/docker-compose.yml" ]; then
+    cd "$LVA_DIR"
+    docker compose down
+    msg "Voice" "LVA stopped."
+  else
+    msg "Voice" "LVA not installed."
+  fi
 }
 
 voice_ha_instructions() {
@@ -594,9 +607,9 @@ voice_ha_instructions() {
   ip_hint="$(hostname -I 2>/dev/null | awk '{print $1}')"
   [ -z "$ip_hint" ] && ip_hint="<this-Pi-IP>"
   
-  msg "HA Setup (1/2)" "STEP 1: Add the satellite\n\n1. Settings → Devices & Services\n2. Add Integration → Wyoming\n3. Host: $ip_hint\n   Port: $VOICE_PORT\n\nHA prerequisites:\n• Whisper add-on (STT)\n• Piper add-on (TTS)\n• Assist pipeline configured\n\nSatellite appears as:\n  assist_satellite.$VOICE_NAME"
+  msg "HA Setup (1/2)" "STEP 1: Add via ESPHome integration\n\n1. Settings → Devices & Services\n2. Add Integration → ESPHome\n3. Host: $ip_hint\n   Port: $VOICE_PORT\n\nEntity created:\n  assist_satellite.${VOICE_NAME}_satellite_assist\n  supported_features: 3 (announce + start_conversation)\n\nHA prerequisites:\n• Whisper add-on (STT)\n• Piper add-on (TTS)\n• Assist pipeline configured"
   
-  msg "HA Setup (2/2)" "STEP 2: 'Listen' button on dashboard\n(primary trigger from phone)\n\nIn configuration.yaml:\n\nrest_command:\n  voice_satellite_listen:\n    url: http://$ip_hint:$VOICE_HTTP_PORT/listen\n    method: POST\n\nRestart HA, then add button:\n\ntype: button\nname: Listen\nicon: mdi:microphone\ntap_action:\n  action: call-service\n  service: rest_command.voice_satellite_listen\n\nNow from phone: tap button → Pi listens."
+  msg "HA Setup (2/2)" "STEP 2: Dashboard 'Listen' button\n\nAdd a button that calls start_conversation:\n\ntype: button\nname: Listen\nicon: mdi:microphone\ntap_action:\n  action: call-service\n  service: assist_satellite.start_conversation\n  target:\n    entity_id: assist_satellite.${VOICE_NAME}_satellite_assist\n  data:\n    start_message: \"\" # optional greeting\n\nNow tap button → Pi listens!"
 }
 
 menu_voice() {
@@ -604,27 +617,27 @@ menu_voice() {
     voice_load
     local c="" mode_l
     case "$VOICE_MODE" in
-      button) mode_l="GPIO Button" ;;
+      button) mode_l="HA button" ;;
       wake) mode_l="Wake word" ;;
       *) mode_l="$VOICE_MODE" ;;
     esac
     
     if have_wt; then
       c=$(whiptail --title "$TITLE · Voice Satellite" --menu \
-        "Wyoming satellite for Home Assistant Assist.\nWall-mounted Pi: primary trigger from phone (HA button).\nGPIO is optional secondary." 24 78 12 \
-        "1" "Install / reinstall satellite" \
+        "Linux Voice Assistant for Home Assistant.\nWall-mounted Pi: trigger via HA start_conversation.\nWake word optional on capable hosts." 24 78 12 \
+        "1" "Install / update LVA (Docker)" \
         "2" "Mode: $mode_l  [change]" \
         "3" "Satellite name: $VOICE_NAME  [change]" \
-        "4" "Wyoming port: $VOICE_PORT  [change]" \
-        "5" "GPIO button (secondary): $VOICE_GPIO  [change]" \
-        "6" "Start services" \
-        "7" "Stop services" \
+        "4" "Wake word: $VOICE_WAKE_WORD  [change]" \
+        "5" "ESPHome port: $VOICE_PORT  [change]" \
+        "6" "Start LVA" \
+        "7" "Stop LVA" \
         "8" "View status" \
-        "9" "★ HA Instructions (dashboard button)" \
+        "9" "HA Instructions (ESPHome + button)" \
         "10" "Back" \
         3>&1 1>&2 2>&3) || return 0
     else
-      echo "Voice: 1 install 2 mode[$mode_l] 3 name[$VOICE_NAME] 4 port[$VOICE_PORT] 5 gpio[$VOICE_GPIO] 6 start 7 stop 8 status 9 HA-help 10 back"
+      echo "Voice: 1 install 2 mode[$mode_l] 3 name[$VOICE_NAME] 4 wake[$VOICE_WAKE_WORD] 5 port[$VOICE_PORT] 6 start 7 stop 8 status 9 HA-help 10 back"
       read -r -p "> " c
     fi
     
@@ -634,11 +647,11 @@ menu_voice() {
         if [ "$VOICE_MODE" = "button" ]; then
           VOICE_MODE="wake"
           voice_save
-          msg "Voice" "Mode: Local wake word (desktop only).\n\nRequires Docker with rhasspy/wyoming-openwakeword\non 127.0.0.1:10400.\n\nFor Pi, HTTP mode (HA button) is recommended."
+          msg "Voice" "Mode: Wake word enabled.\n\nLVA listens for '$VOICE_WAKE_WORD' continuously.\nNote: uses more CPU than button mode.\n\nHA start_conversation still works too."
         else
           VOICE_MODE="button"
           voice_save
-          msg "Voice" "Mode: HTTP trigger + optional GPIO.\n\nPrimary trigger: button on HA dashboard (phone).\nSecondary GPIO: button between GPIO$VOICE_GPIO and GND."
+          msg "Voice" "Mode: HA start_conversation (primary).\n\nTrigger from phone via dashboard button.\nWake word disabled to save CPU."
         fi
         ;;
       3)
@@ -646,21 +659,21 @@ menu_voice() {
         new_name="$(ask_input "Name" "Satellite name (appears in HA):" "$VOICE_NAME")" || continue
         [ -n "$new_name" ] && VOICE_NAME="$new_name"
         voice_save
-        msg "Voice" "Name: $VOICE_NAME\n\nIn HA appears as: assist_satellite.$VOICE_NAME"
+        msg "Voice" "Name: $VOICE_NAME\n\nRestart LVA for changes to take effect."
         ;;
       4)
-        local new_port
-        new_port="$(ask_input "Port" "Wyoming port (default 10700):" "$VOICE_PORT")" || continue
-        [[ "$new_port" =~ ^[0-9]+$ ]] && VOICE_PORT="$new_port"
+        local new_wake
+        new_wake="$(ask_input "Wake word" "Wake word (hey_jarvis, ok_nabu, alexa, hey_mycroft):" "$VOICE_WAKE_WORD")" || continue
+        [ -n "$new_wake" ] && VOICE_WAKE_WORD="$new_wake"
         voice_save
-        msg "Voice" "Port: $VOICE_PORT"
+        msg "Voice" "Wake word: $VOICE_WAKE_WORD\n\nRestart LVA for changes to take effect."
         ;;
       5)
-        local new_gpio
-        new_gpio="$(ask_input "GPIO" "Button GPIO pin (BCM, e.g.: 17, 27, 22):" "$VOICE_GPIO")" || continue
-        [[ "$new_gpio" =~ ^[0-9]+$ ]] && VOICE_GPIO="$new_gpio"
+        local new_port
+        new_port="$(ask_input "Port" "ESPHome port (default 6053):" "$VOICE_PORT")" || continue
+        [[ "$new_port" =~ ^[0-9]+$ ]] && VOICE_PORT="$new_port"
         voice_save
-        msg "Voice" "GPIO button: $VOICE_GPIO\n\nConnect button between GPIO$VOICE_GPIO and GND (internal pull-up)."
+        msg "Voice" "Port: $VOICE_PORT\n\nRestart LVA for changes to take effect."
         ;;
       6) voice_start ;;
       7) voice_stop ;;
@@ -672,7 +685,7 @@ menu_voice() {
 }
 
 cmd_info() {
-  msg "Info" "Nabla Config $VERSION\n\n• Network: cable / AP / cable-ap / off\n• Media: Nabla Pi OS or OTP\n• USB hotplug: dialog (OS / OTP / open)\n• Accessories: OLED / rotary / SPI\n• Camera / voice\n\nRepo: \\\\coco\\nabla.net\\packages"
+  msg "Info" "Nabla Config $VERSION\n\n• Network: cable / AP / cable-ap / off\n• Media: Nabla Pi OS or OTP\n• USB hotplug: dialog (OS / OTP / open)\n• Accessories: OLED / rotary / SPI\n• Camera / voice\n\nRepo: coco.nabla.net/packages"
 }
 
 menu() {
@@ -680,10 +693,10 @@ menu() {
     local c=""
     if have_wt; then
       c=$(whiptail --title "$TITLE" --menu "Nabla Edge Panel" 20 72 11 \
-        "1" "Network (Nabla Net / vpn-mode)" \
-        "2" "Media USB/SD (OS / OTP)" \
-        "3" "Accessories (OLED / rotary / SPI)" \
-        "4" "Camera go2rtc" \
+        "1" "Network" \
+        "2" "Media (USB/SD)" \
+        "3" "Accessories" \
+        "4" "Camera" \
         "5" "Voice Satellite" \
         "6" "Info" \
         "7" "Exit" \
@@ -743,31 +756,34 @@ MENUS
         go2rtc USB camera helper.
 
     Voice Satellite
-        Wyoming voice satellite for Home Assistant Assist.
-        Two modes:
-          button  HTTP + optional GPIO push-to-talk (recommended for Pi)
-          wake    Local openWakeWord Docker (desktop/powerful hosts)
+        Linux Voice Assistant (LVA) for Home Assistant Assist.
+        Uses ESPHome protocol (port 6053) with full feature support:
+          - assist_satellite.start_conversation (HA dashboard button)
+          - assist_satellite.announce
+          - Wake word detection (optional)
         Config: /etc/nabla-edge/voice.conf
 
 FILES
     /etc/nabla-net/accessories.conf
         Accessories profile read by installers and helpers.
-    \\coco\nabla.net\packages
-        Central package drop (tarballs today; apt repo next).
+    /etc/nabla-edge/voice.conf
+        Voice satellite configuration.
+    /opt/nabla-edge/voice/lva/
+        Linux Voice Assistant Docker Compose files.
 
 EXIT STATUS
     0  success or user cancel from menu
     1  usage / missing tool / root required
 
 SEE ALSO
-    nabla-net, nabla-image, vpn-mode, AGENTS.md on \\coco\nabla.net
+    nabla-net, nabla-image, vpn-mode, AGENTS.md
 H
       ;;
-    media|medios|image) need_root; menu_media ;;
-    network|red|net) need_root; menu_network ;;
-    accessories|accesorios|acc) need_root; menu_accessories ;;
+    media|image) need_root; menu_media ;;
+    network|net) need_root; menu_network ;;
+    accessories|acc) need_root; menu_accessories ;;
     oled) need_root; enable_oled ;;
-    voice|voz) need_root; menu_voice ;;
+    voice) need_root; menu_voice ;;
     *) echo "Usage: sudo nabla-config"; exit 1 ;;
   esac
 }

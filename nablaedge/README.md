@@ -1,46 +1,67 @@
 # NablaEdge
 
-Dom's edge system — ESPHome components for rotary encoders, OLEDs, and the nabla.menu engine.
+Edge system — ESPHome components for rotary encoders, OLEDs, nabla.menu engine, and voice satellite support.
 
 ---
 
 ## Overview
 
-NablaEdge devices receive menu definitions over MQTT and render them locally. Menu updates happen without firmware reflash.
+NablaEdge devices receive menu definitions over MQTT and render them locally. Menu updates happen without firmware reflash. Raspberry Pi nodes can also serve as voice satellites for Home Assistant Assist.
 
 ## Structure
 
 ```
 nablaedge/
-├── esphome/
-│   └── components/
-│       └── nabla_menu/      # Menu rendering engine
-├── firmware/                 # Device-specific configs (gitignored binaries)
+├── scripts/
+│   └── nabla-config         # Interactive config menu (whiptail)
+├── voice/
+│   ├── install-lva.sh       # Linux Voice Assistant installer
+│   └── voice.conf.example   # Voice satellite config template
 ├── ui/
-│   └── ssd/                  # OLED paint layer (SSD1306/1309)
+│   └── ssd/                 # OLED paint layer (SSD1306/1309)
 └── docs/
+    ├── voice-satellite/     # Voice satellite documentation
+    ├── pi-config-menu/      # nabla-config usage
+    └── ...
 ```
 
-## Key Concepts
+## Key Features
 
-- **Menu Engine**: Parses JSON menu definitions, renders to OLED, handles rotary input
+### Menu Engine
 - **MQTT-Driven**: Menus arrive via retained MQTT messages
 - **No Reflash**: Change menus by publishing new JSON; device updates immediately
+- **Rotary Input**: EC11 encoder support for menu navigation
 
-## UI Components
+### Voice Satellite
+- **LVA**: Linux Voice Assistant (ESPHome protocol, port 6053)
+- **Button trigger**: HA `start_conversation` from phone/dashboard (default)
+- **Wake word**: Optional continuous listening (desktop hosts)
+- **GPIO**: Physical button support for local trigger
 
-### [ui/ssd/](ui/ssd/)
+### UI Components
+- **OLED**: Shared visual style for SSD1306/SSD1309 displays
+- **Profiles**: 128x64 resolution profiles for Pi and ESP32
 
-Shared visual style for small monochrome OLED displays. Defines layout regions, design tokens, and resolution profiles.
+## Quick Start
 
-Used by both:
-- **Raspberry Pi** (SSD1306) via luma.oled
-- **ESP32** (SSD1309) via ESPHome
+### Voice Satellite (Pi)
 
-Both share the same 128×64 resolution profiles. Paint layer only — menu logic lives in `protocols/menu`.
+```bash
+sudo nabla-config
+# → Voice Satellite → Install / update LVA
+```
 
-## Status
+See [docs/voice-satellite/](docs/voice-satellite/) for full setup.
 
-🚧 **Stub** — Components to be added.
+### Configuration Menu
 
-See [protocols/menu/](../protocols/menu/) for the menu protocol specification.
+```bash
+sudo nabla-config
+```
+
+See [docs/pi-config-menu/](docs/pi-config-menu/) for menu reference.
+
+## Related
+
+- [protocols/menu/](../protocols/menu/) — Menu protocol specification
+- [ui/ssd/](ui/ssd/) — OLED paint layer and layout profiles

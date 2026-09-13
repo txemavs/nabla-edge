@@ -16,7 +16,7 @@ Learning-oriented documentation for the NablaEdge system. Each folder covers one
 | [esphome-patterns/](esphome-patterns/) | How to build OLED+encoder / BLE mounts (no private fleet YAML) |
 | [ble-mesh/](ble-mesh/) | BLE presence/contagion mesh protocol |
 | [packages-apt/](packages-apt/) | APT repository install, tarball fallback, publishing workflow |
-| [voice-satellite/](voice-satellite/) | HA Assist voice satellite (stub) |
+| [voice-satellite/](voice-satellite/) | HA Assist voice satellite (LVA) — ESPHome + start_conversation |
 | [manuals/](manuals/) | PDF manual shelf and classification guide |
 
 ---
@@ -45,7 +45,7 @@ nablaedge/docs/
 │   └── pdf/                # Pinouts, stickers, accessory lists
 ├── ble-mesh/               # BLE presence protocol
 ├── packages-apt/           # apt repo and HTTP serving
-├── voice-satellite/        # HA Assist voice satellite (stub)
+├── voice-satellite/        # HA Assist voice satellite (LVA via ESPHome)
 └── manuals/                # PDF catalog + classification
     ├── pdf/                # General PDFs
     └── private/            # Index only (binaries on NAS)
@@ -87,6 +87,7 @@ flowchart LR
     B --> C[pi-config-menu]
     C --> D[network-modes]
     C --> E[accessories]
+    C --> H[voice-satellite]
     E --> F[accessories/oled-ui]
     D --> G[ble-mesh]
     
@@ -97,9 +98,10 @@ flowchart LR
     style E fill:#f3e5f5
     style F fill:#f3e5f5
     style G fill:#e8f5e9
+    style H fill:#c8e6c9
 ```
 
 1. **Blue** — Foundation: understand the system, create images
 2. **Orange** — Configuration: set up nodes, configure network
 3. **Purple** — Hardware: displays, input devices, OLED paint layer
-4. **Green** — Advanced: mesh networking
+4. **Green** — Advanced: mesh networking, voice assistant

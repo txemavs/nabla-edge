@@ -8,8 +8,9 @@
 # Creates:
 #   - Python venv with wyoming-satellite
 #   - Systemd user service wyoming-satellite.service
+#   - HTTP listen endpoint service (nabla-voice-listen.service)
 #   - Config file /etc/nabla-edge/voice.conf (if not exists)
-#   - GPIO PTT helper (button mode)
+#   - GPIO PTT helper (button mode, optional secondary trigger)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +19,7 @@ CONFIG_DIR="/etc/nabla-edge"
 CONFIG_FILE="$CONFIG_DIR/voice.conf"
 SERVICE_DIR="$HOME/.config/systemd/user"
 SATELLITE_PORT=10700
+LISTEN_HTTP_PORT=10701
 
 # Colors
 RED='\033[0;31m'
@@ -165,6 +167,7 @@ HA_TOKEN_FILE=$CONFIG_DIR/ha-token
 GPIO_PIN=$GPIO_PIN
 WAKE_WORD=hey_jarvis
 PORT=$SATELLITE_PORT
+LISTEN_HTTP_PORT=$LISTEN_HTTP_PORT
 MIC_DEVICE=$mic_dev
 SPK_DEVICE=$spk_dev
 WAKE_URI=tcp://127.0.0.1:10400
@@ -182,25 +185,28 @@ EOF
   fi
 }
 
-install_ptt_script() {
-  if [ "$MODE" != "button" ]; then
-    return
+install_helper_scripts() {
+  log "Installing helper scripts..."
+  
+  # Always install the HTTP listen endpoint (primary trigger via HA dashboard)
+  local listen_script="/opt/nabla-edge/voice/nabla-voice-listen"
+  if [ -f "$SCRIPT_DIR/nabla-voice-listen" ]; then
+    cp "$SCRIPT_DIR/nabla-voice-listen" "$listen_script"
+    chmod +x "$listen_script"
   fi
+  ln -sf "$listen_script" /usr/local/bin/nabla-voice-listen 2>/dev/null || true
+  log "HTTP listen endpoint installed: $listen_script"
   
-  log "Installing PTT helper script..."
-  
-  local ptt_script="/opt/nabla-edge/voice/nabla-voice-ptt"
-  
-  # Copy from source if available, otherwise it should already be there
-  if [ -f "$SCRIPT_DIR/nabla-voice-ptt" ]; then
-    cp "$SCRIPT_DIR/nabla-voice-ptt" "$ptt_script"
-    chmod +x "$ptt_script"
+  # GPIO PTT is optional secondary trigger (button mode only)
+  if [ "$MODE" = "button" ]; then
+    local ptt_script="/opt/nabla-edge/voice/nabla-voice-ptt"
+    if [ -f "$SCRIPT_DIR/nabla-voice-ptt" ]; then
+      cp "$SCRIPT_DIR/nabla-voice-ptt" "$ptt_script"
+      chmod +x "$ptt_script"
+    fi
+    ln -sf "$ptt_script" /usr/local/bin/nabla-voice-ptt 2>/dev/null || true
+    log "GPIO PTT script installed: $ptt_script (optional secondary trigger)"
   fi
-  
-  # Create symlink in PATH
-  ln -sf "$ptt_script" /usr/local/bin/nabla-voice-ptt 2>/dev/null || true
-  
-  log "PTT script installed: $ptt_script"
 }
 
 create_systemd_service() {
@@ -242,11 +248,30 @@ EOF
   
   chown "$real_user:$real_user" "$svc_dir/wyoming-satellite.service"
   
-  # If button mode, also create PTT watcher service
+  # HTTP listen endpoint (primary trigger via HA dashboard / phone)
+  cat > "$svc_dir/nabla-voice-listen.service" <<EOF
+[Unit]
+Description=Nabla Voice Listen HTTP Endpoint
+After=wyoming-satellite.service
+Wants=wyoming-satellite.service
+
+[Service]
+Type=simple
+EnvironmentFile=$CONFIG_FILE
+ExecStart=/opt/nabla-edge/voice/nabla-voice-listen
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+  chown "$real_user:$real_user" "$svc_dir/nabla-voice-listen.service"
+  
+  # GPIO PTT watcher (optional secondary trigger, button mode only)
   if [ "$MODE" = "button" ]; then
     cat > "$svc_dir/nabla-voice-ptt.service" <<EOF
 [Unit]
-Description=Nabla Voice PTT Button Watcher
+Description=Nabla Voice PTT Button Watcher (optional)
 After=wyoming-satellite.service
 Wants=wyoming-satellite.service
 
@@ -285,9 +310,14 @@ enable_services() {
   sudo -u "$real_user" XDG_RUNTIME_DIR="/run/user/$uid" \
     systemctl --user enable wyoming-satellite.service 2>/dev/null || true
   
+  # Enable HTTP listen endpoint (primary trigger)
+  sudo -u "$real_user" XDG_RUNTIME_DIR="/run/user/$uid" \
+    systemctl --user enable nabla-voice-listen.service 2>/dev/null || true
+  
+  # GPIO PTT is optional, don't enable by default (user can enable if they wire a button)
   if [ "$MODE" = "button" ]; then
-    sudo -u "$real_user" XDG_RUNTIME_DIR="/run/user/$uid" \
-      systemctl --user enable nabla-voice-ptt.service 2>/dev/null || true
+    log "GPIO PTT service available but not auto-enabled (optional secondary trigger)"
+    log "To enable: systemctl --user enable nabla-voice-ptt"
   fi
   
   log "Services enabled (will start on next login or reboot)"
@@ -297,36 +327,60 @@ print_next_steps() {
   echo ""
   log "Installation complete!"
   echo ""
-  echo "Next steps:"
+  echo "=== Next steps ==="
   echo ""
   echo "1. Edit configuration:"
   echo "   sudo nano $CONFIG_FILE"
   echo ""
-  echo "2. Set your HA token:"
-  echo "   echo 'your-long-lived-token' | sudo tee $CONFIG_DIR/ha-token"
-  echo ""
-  echo "3. Start the satellite:"
+  echo "2. Start services:"
   echo "   systemctl --user start wyoming-satellite"
+  echo "   systemctl --user start nabla-voice-listen"
+  echo ""
+  echo "3. In Home Assistant:"
+  echo "   a) Add the satellite:"
+  echo "      Settings → Devices & Services → Add Integration → Wyoming"
+  echo "      Host: <this-device-ip-or-hostname>"
+  echo "      Port: $SATELLITE_PORT"
+  echo ""
+  echo "   b) Add a 'Listen' button to your dashboard (PRIMARY TRIGGER):"
+  echo "      See instructions below for rest_command or shell_command."
+  echo ""
+  echo "=== HA Dashboard Listen Button (recommended) ==="
+  echo ""
+  echo "Add to configuration.yaml:"
+  echo ""
+  echo "  rest_command:"
+  echo "    voice_satellite_listen:"
+  echo "      url: http://<pi-ip>:$LISTEN_HTTP_PORT/listen"
+  echo "      method: POST"
+  echo ""
+  echo "Then create a button card on your dashboard:"
+  echo ""
+  echo "  type: button"
+  echo "  name: Listen"
+  echo "  icon: mdi:microphone"
+  echo "  tap_action:"
+  echo "    action: call-service"
+  echo "    service: rest_command.voice_satellite_listen"
+  echo ""
   if [ "$MODE" = "button" ]; then
-    echo "   systemctl --user start nabla-voice-ptt"
+    echo "=== Optional: GPIO button (secondary trigger) ==="
+    echo ""
+    echo "If you also want a physical button on the Pi:"
+    echo "  - Wire button between GPIO$GPIO_PIN and GND"
+    echo "  - Enable: systemctl --user enable --now nabla-voice-ptt"
+    echo ""
   fi
-  echo ""
-  echo "4. In Home Assistant:"
-  echo "   - Settings → Devices & Services → Add Integration → Wyoming"
-  echo "   - Host: <this-device-ip-or-hostname>"
-  echo "   - Port: $SATELLITE_PORT"
-  echo ""
-  if [ "$MODE" = "button" ]; then
-    echo "5. Wire a button between GPIO$GPIO_PIN and GND"
-    echo "   Press button to start Assist conversation"
-  else
-    echo "5. Start local wake word (Docker):"
-    echo "   docker run -d --name openwakeword \\"
-    echo "     -p 127.0.0.1:10400:10400 \\"
-    echo "     rhasspy/wyoming-openwakeword \\"
-    echo "     --preload-model hey_jarvis"
+  if [ "$MODE" = "wake" ]; then
+    echo "=== Wake word (desktop mode) ==="
+    echo ""
+    echo "Start local wake word (Docker):"
+    echo "  docker run -d --name openwakeword \\"
+    echo "    -p 127.0.0.1:10400:10400 \\"
+    echo "    rhasspy/wyoming-openwakeword \\"
+    echo "    --preload-model hey_jarvis"
+    echo ""
   fi
-  echo ""
 }
 
 # --- Main ---
@@ -375,7 +429,7 @@ log "Installing Wyoming satellite (mode=$MODE)..."
 install_system_deps
 create_venv
 create_config
-install_ptt_script
+install_helper_scripts
 create_systemd_service
 enable_services
 print_next_steps

@@ -27,6 +27,10 @@ WAKE_WORD=hey_jarvis
 # Wyoming satellite port (default 10700)
 PORT=10700
 
+# HTTP listen endpoint port (default 10701)
+# This is the primary trigger for HA dashboard / phone
+LISTEN_HTTP_PORT=10701
+
 # Audio devices (auto-detected if empty)
 # Use 'arecord -L' / 'aplay -L' to list
 # Format: plughw:CARD,DEV or pulse device name

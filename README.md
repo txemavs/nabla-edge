@@ -11,6 +11,8 @@ No secrets, credentials, private IPs, or production entity IDs. See [AGENTS.md](
 ```
 nabla-edge/
 ├── nablaedge/        # NablaEdge - Dom's edge system (ESPHome components, firmware)
+│   └── ui/
+│       └── ssd/      # Shared OLED paint layer for SSD1306/SSD1309 displays
 ├── homeassistant/    # NablaNet - Home Assistant integration (separate concern)
 ├── protocols/        # Backend-agnostic protocols (nabla.menu, etc.)
 │   └── menu/         # nabla.menu/v1 - rotary/OLED menu protocol
@@ -26,6 +28,8 @@ nabla-edge/
 ### NablaEdge (`nablaedge/`)
 
 The edge stack: ESPHome custom components for rotary encoders, OLEDs, and the menu engine. Devices receive menu definitions over MQTT and render them locally—no firmware reflash needed for menu updates.
+
+- **[nablaedge/ui/ssd/](nablaedge/ui/ssd/)** — Visual style definitions for small monochrome OLEDs (layout, tokens, profiles).
 
 ### NablaNet Home Assistant (`homeassistant/`)
 

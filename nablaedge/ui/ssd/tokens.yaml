@@ -1,0 +1,40 @@
+# SSD OLED Design Tokens
+# Shared visual vocabulary for monochrome displays.
+# Platform renderers (luma, ESPHome) interpret these values.
+
+color:
+  on: 1          # Foreground pixel (white on typical OLED)
+  off: 0         # Background pixel (black / off)
+
+font:
+  status:
+    height: 8
+    weight: regular
+    description: Status bar text, icons, clock
+
+  title:
+    height: 16
+    weight: bold
+    description: Primary headline, centered
+
+  subtitle:
+    height: 10
+    weight: regular
+    description: Secondary information below title
+
+  body:
+    height: 8
+    weight: regular
+    description: Menu items, lists, small text
+
+spacing:
+  line: 2              # Pixels between lines in body region
+  margin_h: 2          # Horizontal margin (left + right)
+  status_pad_v: 1      # Vertical padding inside status bar
+  menu_item_height: 10 # Total height per menu row
+
+selection:
+  caret: "▶"           # Character for selected item indicator
+  caret_alt: ">"       # ASCII fallback
+  caret_width: 8       # Pixels reserved for caret column
+  invert: false        # If true, invert colors on selected row

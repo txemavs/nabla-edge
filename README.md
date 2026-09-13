@@ -29,7 +29,8 @@ nabla-edge/
 
 The edge stack: ESPHome custom components for rotary encoders, OLEDs, and the menu engine. Devices receive menu definitions over MQTT and render them locally—no firmware reflash needed for menu updates.
 
-- **[nablaedge/ui/ssd/](nablaedge/ui/ssd/)** — Visual style definitions for small monochrome OLEDs (layout, tokens, profiles).
+- **[nablaedge/docs/](nablaedge/docs/)** — 📚 How-to documentation: architecture, imaging, network modes, accessories
+- **[nablaedge/ui/ssd/](nablaedge/ui/ssd/)** — Visual style definitions for small monochrome OLEDs (layout, tokens, profiles)
 
 ### NablaNet Home Assistant (`homeassistant/`)
 

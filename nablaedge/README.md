@@ -8,17 +8,41 @@ Dom's edge system — ESPHome components for rotary encoders, OLEDs, and the nab
 
 NablaEdge devices receive menu definitions over MQTT and render them locally. Menu updates happen without firmware reflash.
 
+## Documentation
+
+**[📚 docs/](docs/)** — Learning-oriented how-to guides:
+
+| Topic | Description |
+|-------|-------------|
+| [architecture](docs/architecture/) | Big picture: edge nodes, protocols, data flow |
+| [pi-config-menu](docs/pi-config-menu/) | The nabla-config whiptail menu |
+| [network-modes](docs/network-modes/) | Nabla Net: cable, ap, cable-ap, off |
+| [imaging](docs/imaging/) | nabla-image: SD/USB imaging + first-boot |
+| [accessories](docs/accessories/) | OLED, rotary, large SPI + OLED UI |
+| [ble-mesh](docs/ble-mesh/) | BLE presence/contagion protocol |
+| [packages-apt](docs/packages-apt/) | Apt packages and HTTP publishing |
+
 ## Structure
 
 ```
 nablaedge/
+├── docs/                     # ← How-to documentation
+│   ├── architecture/
+│   ├── pi-config-menu/
+│   ├── network-modes/
+│   ├── imaging/
+│   ├── accessories/
+│   │   └── oled-ui/
+│   ├── ble-mesh/
+│   ├── packages-apt/
+│   ├── voice-satellite/
+│   └── manuals/
 ├── esphome/
 │   └── components/
-│       └── nabla_menu/      # Menu rendering engine
+│       └── nabla_menu/       # Menu rendering engine
 ├── firmware/                 # Device-specific configs (gitignored binaries)
-├── ui/
-│   └── ssd/                  # OLED paint layer (SSD1306/1309)
-└── docs/
+└── ui/
+    └── ssd/                  # OLED paint layer (SSD1306/1309)
 ```
 
 ## Key Concepts

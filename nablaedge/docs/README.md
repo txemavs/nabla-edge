@@ -46,6 +46,7 @@ nablaedge/docs/
 ├── ble-mesh/               # BLE presence protocol
 ├── packages-apt/           # apt repo and HTTP serving
 ├── voice-satellite/        # HA Assist voice satellite (LVA via ESPHome)
+│   └── custom-wake-words/  # Custom microWakeWord training and deployment
 └── manuals/                # PDF catalog + classification
     ├── pdf/                # General PDFs
     └── private/            # Index only (binaries on NAS)

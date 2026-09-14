@@ -1,22 +1,21 @@
 # Nabla OTP Enabler
 
-Tiny bootable SD image (~50-100MB) that programs the Pi 3B USB-boot OTP fuse and provides hardware diagnostics.
+Minimal bootable SD image (~50-100MB) that programs the Pi 3B USB-boot OTP fuse and provides hardware diagnostics.
 
 ---
 
-## Why This Exists
+## Overview
 
-The Raspberry Pi 3B doesn't boot from USB by default. You must burn a one-time programmable (OTP) fuse to enable USB boot. The old approach was booting a full Pi OS image (~2.7GB) just to write one config line — wasteful and slow.
+The Raspberry Pi 3B requires a one-time programmable (OTP) fuse to enable USB boot. This tool creates a small diagnostic SD card that:
 
-**Problem solved:** The old OTP SD showed a black screen. You couldn't tell if the Pi was dead or working. After OTP programming, if Nabla OS USB still showed black, you had no way to diagnose.
-
-**This OTP enabler:**
 - Fits on a **256MB SD card** (~50-100MB actual)
-- Shows **visible on-screen text** via HDMI
-- Displays Pi model, serial number, and hardware info
-- **Scans USB drives** for Nabla OS markers
-- Burns the OTP fuse automatically
-- Counts down and halts safely
+- Displays diagnostic text on HDMI
+- Shows Pi model, serial number, and hardware info
+- Scans USB drives for Nabla OS
+- Programs the OTP fuse automatically
+- Halts safely after countdown
+
+The previous method used a full Pi OS image (~2.7GB) with no display output. This version provides visible confirmation that the Pi is working and the fuse is programmed.
 
 ---
 
@@ -47,48 +46,46 @@ sudo nabla-image write-otp /dev/sdX
 1. Insert SD into Pi 3B
 2. Connect HDMI monitor
 3. Power on
-4. Watch the diagnostic display:
+4. The diagnostic display shows:
 
 ```
-    ∇ NABLA OTP ENABLER
-    Pi 3B USB-boot fuse + diagnostics
+    NABLA OTP ENABLER
+    Programming USB boot fuse (Pi 3B)
 
     ─────────────────────────────────
 
-    Hardware Information
+    Hardware
     Model:    Raspberry Pi 3 Model B Rev 1.2
     Serial:   00000000abcd1234
     Revision: a02082
 
-    OTP USB Boot Status
-    ✓ OTP programming requested (config.txt)
-    (Fuse burned by GPU firmware at boot)
+    OTP Status
+    OK USB boot fuse programmed by GPU firmware
 
-    After power-off, this Pi 3B will boot from USB.
-    Verify later with: vcgencmd otp_dump | grep 17:
-    Expected: 17:3020000a
+    This Pi 3B will boot from USB after power-off.
+    Verify with: vcgencmd otp_dump | grep 17:
+    Expected:    17:3020000a
 
-    USB Device Scan
-    /dev/sda: 32GB - SanDisk Cruzer
-      /dev/sda1 [bootfs]: Pi OS boot partition (no Nabla markers)
-    No Nabla OS detected
+    USB Storage
+    /dev/sda: 32GB SanDisk Cruzer
+    USB: Nabla OS detected on /dev/sda1
 
     ─────────────────────────────────
 
-    Instructions
-    1. Leave powered on for ~30 seconds (OTP burns)
-    2. Power off safely when countdown ends
+    Next Steps
+    1. Wait for countdown to complete
+    2. Power off when finished
     3. Remove this SD card
     4. Insert Nabla OS USB drive
-    5. Power on — Pi should boot from USB
+    5. Power on to boot from USB
 
-    Waiting 120 seconds before halt...
-    Time remaining:  85 seconds
+    System will halt in 120 seconds
+    Press Enter to halt now
+    Remaining:  85 seconds
 ```
 
 5. Wait for countdown or press Enter
-6. Power off when prompted
-7. Remove SD, insert Nabla OS USB, power on
+6. Power off when finished, then remove this SD to boot from USB
 
 ---
 
@@ -108,7 +105,17 @@ The scan looks for these files on mounted USB partitions:
 
 If found, displays:
 ```
-✓ /dev/sda1 [bootfs]: Nabla OS detected
+USB: Nabla OS detected on /dev/sda1
+```
+
+If no Nabla OS is found:
+```
+USB: no Nabla OS found
+```
+
+If no USB drive is connected:
+```
+USB: no USB disk
 ```
 
 ### Hardware Info
@@ -220,11 +227,11 @@ The builder caches these in `~/.cache/nabla-otp/`:
 3. Connect before power-on
 4. Verify SD card is properly seated
 
-### "No USB storage devices found"
+### "USB: no USB disk"
 
 - Wait 5-10 seconds after boot for USB enumeration
 - Try a different USB port
-- Check USB drive is functional
+- Verify the USB drive is functional
 
 ### OTP not programmed (17:1020000a)
 

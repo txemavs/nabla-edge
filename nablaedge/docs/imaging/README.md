@@ -185,12 +185,12 @@ The Raspberry Pi 3B requires a one-time OTP (One-Time Programmable) bit to enabl
 
 ### The OTP Enabler SD (Recommended)
 
-The **OTP enabler** is a tiny bootable SD image (~50-100MB) that:
+The **OTP enabler** is a minimal bootable SD image (~50-100MB) that:
 
-- Shows visible text on HDMI (no more black screen!)
-- Displays Pi model, serial number, hardware info
+- Displays diagnostic text on HDMI
+- Shows Pi model, serial number, hardware info
 - Scans attached USB drives for Nabla OS
-- Burns the OTP fuse automatically
+- Programs the OTP fuse automatically
 - Fits on a **256MB SD card**
 
 ```bash
@@ -198,24 +198,24 @@ The **OTP enabler** is a tiny bootable SD image (~50-100MB) that:
 sudo nabla-image write-otp /dev/sdX
 ```
 
-#### What You See on Screen
+#### Display Output
 
 ```
-    ∇ NABLA OTP ENABLER
-    Pi 3B USB-boot fuse + diagnostics
+    NABLA OTP ENABLER
+    Programming USB boot fuse (Pi 3B)
 
-    Hardware Information
+    Hardware
     Model:    Raspberry Pi 3 Model B Rev 1.2
     Serial:   00000000abcd1234
 
-    OTP USB Boot Status
-    ✓ OTP programming requested (config.txt)
+    OTP Status
+    OK USB boot fuse programmed by GPU firmware
 
-    USB Device Scan
-    /dev/sda: 32GB - SanDisk Cruzer
-      /dev/sda1 [bootfs]: ✓ Nabla OS detected
+    USB Storage
+    /dev/sda: 32GB SanDisk Cruzer
+    USB: Nabla OS detected on /dev/sda1
 
-    Waiting 120 seconds before halt...
+    System will halt in 120 seconds
 ```
 
 #### Using the OTP Enabler
@@ -223,10 +223,9 @@ sudo nabla-image write-otp /dev/sdX
 1. Write OTP enabler to SD: `sudo nabla-image write-otp /dev/sdX`
 2. Insert SD into Pi 3B
 3. Connect HDMI monitor
-4. Power on — watch the diagnostic display
-5. Wait ~30 seconds (OTP fuse burns at boot)
-6. Power off when countdown completes
-7. Remove SD, insert Nabla OS USB, power on
+4. Power on and verify display output
+5. Wait for countdown to complete
+6. Power off when finished, then remove this SD to boot from USB
 
 See [`../../scripts/otp-enabler/README.md`](../../scripts/otp-enabler/README.md) for full details.
 

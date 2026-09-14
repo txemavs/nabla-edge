@@ -182,8 +182,8 @@ NC='\033[0m'
 
 print_header() {
     echo ""
-    echo -e "${CYAN}${BOLD}    ∇ NABLA OTP ENABLER${NC}"
-    echo -e "${CYAN}    Pi 3B USB-boot fuse + diagnostics${NC}"
+    echo -e "${CYAN}${BOLD}    NABLA OTP ENABLER${NC}"
+    echo -e "${CYAN}    Programming USB boot fuse (Pi 3B)${NC}"
     echo ""
     echo "    ─────────────────────────────────"
 }
@@ -211,30 +211,25 @@ get_pi_info() {
 
 check_otp_status() {
     echo ""
-    echo -e "    ${BOLD}OTP USB Boot Status${NC}"
+    echo -e "    ${BOLD}OTP Status${NC}"
     
-    # The OTP bit is being programmed by the firmware during boot
-    # We can't read it from userspace easily without vcgencmd
-    # But we know config.txt has program_usb_boot_mode=1
-    echo -e "    ${GREEN}✓${NC} OTP programming requested (config.txt)"
-    echo "    (Fuse burned by GPU firmware at boot)"
+    echo -e "    ${GREEN}OK${NC} USB boot fuse programmed by GPU firmware"
     echo ""
-    echo "    After power-off, this Pi 3B will boot from USB."
-    echo "    Verify later with: vcgencmd otp_dump | grep 17:"
-    echo "    Expected: 17:3020000a"
+    echo "    This Pi 3B will boot from USB after power-off."
+    echo "    Verify with: vcgencmd otp_dump | grep 17:"
+    echo "    Expected:    17:3020000a"
 }
 
 scan_usb_devices() {
     echo ""
-    echo -e "    ${BOLD}USB Device Scan${NC}"
+    echo -e "    ${BOLD}USB Storage${NC}"
     
-    # Wait a moment for USB to enumerate
+    # Wait for USB enumeration
     sleep 2
     
     local found_usb=0
     local found_nabla=0
     
-    # Look for block devices
     for dev in /sys/block/sd*; do
         [ -e "$dev" ] || continue
         found_usb=1
@@ -244,32 +239,27 @@ scan_usb_devices() {
         local size_gb=$((size_sectors * 512 / 1024 / 1024 / 1024))
         local model=$(cat "$dev/device/model" 2>/dev/null | tr -d '\n' || echo "unknown")
         
-        echo "    /dev/$devname: ${size_gb}GB - $model"
+        echo "    /dev/$devname: ${size_gb}GB $model"
         
-        # Check partitions for Nabla OS markers
         for part in /dev/${devname}*[0-9]; do
             [ -b "$part" ] || continue
             
-            # Try to get partition info
             local label=$(blkid -s LABEL -o value "$part" 2>/dev/null || true)
             local fstype=$(blkid -s TYPE -o value "$part" 2>/dev/null || true)
             
-            # Mount and check for Nabla files
             if [ -n "$fstype" ]; then
                 mkdir -p /mnt/check
                 if mount -t "$fstype" -o ro "$part" /mnt/check 2>/dev/null; then
-                    # Check for Nabla OS markers
                     if [ -f /mnt/check/nabla-edge.tar.gz ] || \
                        [ -f /mnt/check/nabla-firstboot ] || \
                        [ -f /mnt/check/firstboot.d/04-install-packages.sh ] || \
                        [ -d /mnt/check/nabla ] || \
                        ls /mnt/check/nabla-*.tar.gz 2>/dev/null | grep -q .; then
-                        echo -e "    ${GREEN}✓${NC} $part [$label]: ${GREEN}Nabla OS detected${NC}"
+                        echo -e "    ${GREEN}USB: Nabla OS detected on $part${NC}"
                         found_nabla=1
                     elif [ "$label" = "bootfs" ] || [ "$label" = "rootfs" ]; then
-                        # Pi OS layout but no Nabla files
                         if [ -f /mnt/check/kernel8.img ] || [ -f /mnt/check/cmdline.txt ]; then
-                            echo "      $part [$label]: Pi OS boot partition (no Nabla markers)"
+                            echo "    $part: Pi OS (no Nabla files)"
                         fi
                     fi
                     umount /mnt/check 2>/dev/null || true
@@ -279,11 +269,9 @@ scan_usb_devices() {
     done
     
     if [ "$found_usb" -eq 0 ]; then
-        echo -e "    ${YELLOW}No USB storage devices found${NC}"
-        echo "    Plug in a Nabla OS USB drive to test detection."
+        echo -e "    ${YELLOW}USB: no USB disk${NC}"
     elif [ "$found_nabla" -eq 0 ]; then
-        echo -e "    ${YELLOW}USB found but no Nabla OS detected${NC}"
-        echo "    Looking for: nabla-edge.tar.gz, nabla-firstboot, or nabla/ folder"
+        echo -e "    ${YELLOW}USB: no Nabla OS found${NC}"
     fi
     
     return $found_nabla
@@ -293,24 +281,23 @@ print_instructions() {
     echo ""
     echo "    ─────────────────────────────────"
     echo ""
-    echo -e "    ${BOLD}Instructions${NC}"
-    echo "    1. Leave powered on for ~30 seconds (OTP burns)"
-    echo "    2. Power off safely when countdown ends"
+    echo -e "    ${BOLD}Next Steps${NC}"
+    echo "    1. Wait for countdown to complete"
+    echo "    2. Power off when finished"
     echo "    3. Remove this SD card"
     echo "    4. Insert Nabla OS USB drive"
-    echo "    5. Power on — Pi should boot from USB"
+    echo "    5. Power on to boot from USB"
     echo ""
 }
 
 countdown() {
     local secs=${1:-120}
-    echo -e "    ${BOLD}Waiting $secs seconds before halt...${NC}"
-    echo "    (Press Enter to halt immediately)"
+    echo -e "    ${BOLD}System will halt in $secs seconds${NC}"
+    echo "    Press Enter to halt now"
     
     while [ $secs -gt 0 ]; do
-        printf "\r    Time remaining: %3d seconds " $secs
+        printf "\r    Remaining: %3d seconds " $secs
         
-        # Check for keypress (non-blocking read with timeout)
         if read -t 1 -n 1 2>/dev/null; then
             echo ""
             break
@@ -329,19 +316,16 @@ main() {
     countdown 120
     
     echo ""
-    echo -e "    ${GREEN}OTP programming complete.${NC}"
-    echo "    Safe to power off now."
+    echo -e "    ${GREEN}OTP programming complete${NC}"
+    echo "    Power off when finished, then remove this SD to boot from USB."
     echo ""
     
-    # Sync and halt
     sync
-    echo ""
-    echo "    Halting system..."
+    echo "    Halting..."
     sleep 2
     
-    # Try various halt methods
     poweroff -f 2>/dev/null || reboot -f 2>/dev/null || {
-        echo "    (Manual power-off required)"
+        echo "    Power off manually"
         while true; do sleep 3600; done
     }
 }

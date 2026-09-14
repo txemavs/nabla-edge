@@ -177,19 +177,18 @@ cmd_write_otp() {
     sync
     
     log ""
-    log "=== OTP enabler written to $dev ==="
+    log "OTP enabler written to $dev"
     log ""
     log "Next steps:"
-    log "  1. Insert SD into Raspberry Pi 3B"
+    log "  1. Insert SD into Pi 3B"
     log "  2. Connect HDMI monitor"
-    log "  3. Power on"
-    log "  4. Watch for diagnostic display (model, serial, USB status)"
-    log "  5. OTP fuse burns automatically (wait ~30 seconds)"
-    log "  6. Power off when prompted"
-    log "  7. Remove SD, insert Nabla OS USB, power on"
+    log "  3. Power on and verify display output"
+    log "  4. Wait for countdown to complete"
+    log "  5. Power off when finished"
+    log "  6. Remove SD, insert Nabla OS USB, power on"
     log ""
-    log "Verify OTP later: vcgencmd otp_dump | grep 17:"
-    log "Expected: 17:3020000a"
+    log "Verify OTP: vcgencmd otp_dump | grep 17:"
+    log "Expected:   17:3020000a"
 }
 
 cmd_build_otp() {

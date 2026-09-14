@@ -44,7 +44,7 @@ Desktop hosts can run continuous wake word detection.
 
 - **Mode:** `wake`
 - **Wake word:** `ok_nabu` (built-in), custom models planned
-- **Custom wake word:** "Oye Veronica" (microWakeWord training in progress — NOT ready)
+- **Custom wake word:** "Oye Veronica" ready — see [custom-wake-words/](custom-wake-words/)
 - **Note:** HA `start_conversation` also works as a fallback
 
 ---
@@ -218,9 +218,10 @@ Continuous wake word detection using microWakeWord. Uses more CPU but enables ha
 
 **Available wake words:** `hey_jarvis`, `ok_nabu`, `alexa`, `hey_mycroft`
 
-**Custom wake word (coming soon):**
-- "Oye Veronica" — microWakeWord model training on RTX 4090
-- Once ready, `.tflite` + `.json` files go to `/opt/nabla-edge/voice/wake/`
+**Custom wake word:**
+- "Oye Veronica" — first-pass model ready
+- Model files (`.tflite` + `.json`) deploy to `/app/wakewords/custom/`
+- See [custom-wake-words/](custom-wake-words/) for training and deployment
 
 **Recommended for:**
 - Desktop workstations with always-on power
@@ -347,11 +348,13 @@ loginctl enable-linger $USER
 | `/etc/nabla-edge/voice.conf` | Configuration |
 | `/opt/nabla-edge/voice/lva/` | Docker Compose files |
 | `/opt/nabla-edge/voice/lva/.env` | LVA environment variables |
+| `/app/wakewords/custom/` | Custom wake word models (.tflite + .json) |
 
 ---
 
 ## See Also
 
+- [custom-wake-words/](custom-wake-words/) — Custom wake word training and deployment
 - [`../../voice/`](../../voice/) — Voice module scripts
 - [`../pi-config-menu/`](../pi-config-menu/) — nabla-config usage
 - [OHF-Voice/linux-voice-assistant](https://github.com/OHF-Voice/linux-voice-assistant)

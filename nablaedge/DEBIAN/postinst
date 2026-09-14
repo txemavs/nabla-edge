@@ -1,0 +1,40 @@
+#!/bin/bash
+# postinst — NablaEdge post-installation script
+# Installs CLI tools to /usr/local/bin so `sudo nabla-config` works
+set -e
+
+INSTALL_DIR="/usr/local/bin"
+OPT_DIR="/opt/nabla-edge"
+
+# Tools to link/copy to /usr/local/bin
+TOOLS="nabla-config nabla-image"
+
+case "$1" in
+  configure)
+    # Ensure /usr/local/bin exists
+    install -d -m 755 "$INSTALL_DIR"
+
+    # Install each tool to /usr/local/bin
+    for tool in $TOOLS; do
+      src="$OPT_DIR/scripts/$tool"
+      dst="$INSTALL_DIR/$tool"
+      if [ -f "$src" ]; then
+        # Copy with proper permissions (prefer copy over symlink for robustness)
+        install -m 755 "$src" "$dst"
+      fi
+    done
+
+    echo "NablaEdge tools installed to $INSTALL_DIR"
+    echo "Run: sudo nabla-config"
+    ;;
+
+  abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+
+  *)
+    echo "postinst called with unknown argument: $1" >&2
+    exit 1
+    ;;
+esac
+
+exit 0

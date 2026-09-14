@@ -1,0 +1,140 @@
+#!/bin/bash
+# nabla-image — Nabla Pi OS / OTP imaging tool
+# Usage: sudo nabla-image <command> [options]
+set -euo pipefail
+
+VERSION="0.5.0"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/nabla-image"
+
+err() { echo "ERROR: $*" >&2; exit 1; }
+log() { echo ":: $*"; }
+
+need_root() {
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Requires root: sudo nabla-image $*" >&2
+    exit 1
+  fi
+}
+
+show_help() {
+  cat <<'EOF'
+NAME
+    nabla-image — Nabla Pi OS imaging and OTP enabler tool
+
+SYNOPSIS
+    sudo nabla-image write-usb DEVICE [--desktop|--lite] [OPTIONS]
+    sudo nabla-image write-otp DEVICE
+    sudo nabla-image fetch-base [desktop|lite]
+    nabla-image --list
+    nabla-image --help
+
+COMMANDS
+    write-usb DEVICE
+        Write Nabla Pi OS to a USB/SD device.
+        Options:
+          --desktop           Full desktop image (default)
+          --lite              Headless lite image
+          --hostname NAME     Set hostname (default: edge)
+          --octeto N          Subnet octet for 10.100.N.0/24 (default: 3)
+
+    write-otp DEVICE
+        Write the OTP boot enabler to a USB/SD for Pi 3B.
+        This allows the Pi 3B to boot from USB (one-time operation).
+
+    fetch-base [desktop|lite]
+        Download and cache the base Raspberry Pi OS image.
+
+OPTIONS
+    --list, -l      List available target drives
+    --help, -h      Show this help
+    --version, -v   Show version
+
+EXAMPLES
+    sudo nabla-image write-usb /dev/sdb --desktop --hostname demo
+    sudo nabla-image write-otp /dev/sdc
+    nabla-image --list
+
+EXIT STATUS
+    0  success
+    1  error or missing arguments
+
+SEE ALSO
+    nabla-config, nabla-net
+EOF
+}
+
+list_drives() {
+  log "Available drives (excluding system):"
+  lsblk -d -o NAME,SIZE,TRAN,MODEL,TYPE | grep -E 'disk$|NAME' || true
+}
+
+cmd_fetch_base() {
+  local variant="${1:-desktop}"
+  mkdir -p "$CACHE_DIR"
+  log "Fetching Raspberry Pi OS ($variant)..."
+  log "Cache directory: $CACHE_DIR"
+  err "fetch-base not yet implemented — download from https://www.raspberrypi.com/software/operating-systems/"
+}
+
+cmd_write_usb() {
+  need_root
+  local device="$1"; shift
+  local variant="desktop" hostname="edge" octeto="3"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --desktop) variant="desktop" ;;
+      --lite) variant="lite" ;;
+      --hostname) hostname="$2"; shift ;;
+      --octeto) octeto="$2"; shift ;;
+      *) err "Unknown option: $1" ;;
+    esac
+    shift
+  done
+
+  [ -b "$device" ] || err "Device $device not found"
+  log "Writing Nabla Pi OS ($variant) to $device"
+  log "  Hostname: $hostname"
+  log "  Subnet: 10.100.$octeto.0/24"
+  err "write-usb not yet fully implemented — see docs/imaging/README.md"
+}
+
+cmd_write_otp() {
+  need_root
+  local device="$1"
+  [ -b "$device" ] || err "Device $device not found"
+  log "Writing OTP enabler to $device"
+  err "write-otp not yet fully implemented — see docs/imaging/README.md"
+}
+
+main() {
+  case "${1:-}" in
+    -h|--help|help) show_help ;;
+    -v|--version) echo "nabla-image $VERSION" ;;
+    -l|--list) list_drives ;;
+    write-usb)
+      shift
+      [ $# -ge 1 ] || err "Usage: nabla-image write-usb DEVICE [options]"
+      cmd_write_usb "$@"
+      ;;
+    write-otp)
+      shift
+      [ $# -ge 1 ] || err "Usage: nabla-image write-otp DEVICE"
+      cmd_write_otp "$@"
+      ;;
+    fetch-base)
+      shift
+      cmd_fetch_base "${1:-desktop}"
+      ;;
+    "")
+      echo "Usage: sudo nabla-image <command> [options]"
+      echo "Try 'nabla-image --help' for more information."
+      exit 1
+      ;;
+    *)
+      err "Unknown command: $1"
+      ;;
+  esac
+}
+
+main "$@"

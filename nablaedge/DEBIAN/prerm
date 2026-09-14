@@ -1,0 +1,28 @@
+#!/bin/bash
+# prerm — NablaEdge pre-removal script
+# Removes CLI tools from /usr/local/bin
+set -e
+
+INSTALL_DIR="/usr/local/bin"
+TOOLS="nabla-config nabla-image"
+
+case "$1" in
+  remove|upgrade|deconfigure)
+    for tool in $TOOLS; do
+      dst="$INSTALL_DIR/$tool"
+      if [ -f "$dst" ]; then
+        rm -f "$dst"
+      fi
+    done
+    ;;
+
+  failed-upgrade)
+    ;;
+
+  *)
+    echo "prerm called with unknown argument: $1" >&2
+    exit 1
+    ;;
+esac
+
+exit 0

@@ -1,0 +1,14 @@
+Package: nabla-edge
+Version: 0.8.0
+Section: admin
+Priority: optional
+Architecture: all
+Depends: whiptail, coreutils
+Recommends: docker.io | docker-ce
+Maintainer: Nabla <packages@nabla.net>
+Description: NablaEdge system configuration and imaging tools
+ NablaEdge provides tools for configuring Raspberry Pi edge nodes:
+  - nabla-config: Interactive whiptail menu for system setup
+  - nabla-image: SD/USB imaging tool for new nodes
+ .
+ After installation, run: sudo nabla-config

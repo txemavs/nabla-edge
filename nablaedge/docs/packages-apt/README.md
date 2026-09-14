@@ -26,8 +26,14 @@ sudo apt install nabla-edge
 That's it. The package installs:
 
 - **Tools** under `/opt/nabla-edge/`
-- **CLIs** in PATH: `nabla-config`, `nabla-net`, `vpn-mode`, `nabla-image`
+- **CLIs** to `/usr/local/bin/`: `nabla-config`, `nabla-image` (and `nabla-net`, `vpn-mode` when present)
 - Systemd services for network modes and accessories
+
+The tools are installed to `/usr/local/bin/` so they work with `sudo`:
+
+```bash
+sudo nabla-config     # Works — root PATH includes /usr/local/bin
+```
 
 ---
 

@@ -12,13 +12,19 @@ NablaEdge devices receive menu definitions over MQTT and render them locally. Me
 
 ```
 nablaedge/
+├── install.sh               # System-wide installer (→ /usr/local/bin)
 ├── scripts/
-│   └── nabla-config         # Interactive config menu (whiptail)
+│   ├── nabla-config         # Interactive config menu (whiptail)
+│   └── nabla-image          # SD/USB imaging tool
 ├── voice/
 │   ├── install-lva.sh       # Linux Voice Assistant installer
 │   └── voice.conf.example   # Voice satellite config template
 ├── ui/
 │   └── ssd/                 # OLED paint layer (SSD1306/1309)
+├── DEBIAN/                  # Debian packaging files
+│   ├── control
+│   ├── postinst             # Installs tools to /usr/local/bin
+│   └── prerm
 └── docs/
     ├── voice-satellite/     # Voice satellite documentation
     ├── pi-config-menu/      # nabla-config usage
@@ -43,6 +49,23 @@ nablaedge/
 - **Profiles**: 128x64 resolution profiles for Pi and ESP32
 
 ## Quick Start
+
+### Install
+
+```bash
+# Via APT (recommended)
+sudo apt install nabla-edge
+
+# Or manual install
+cd nablaedge && sudo ./install.sh
+```
+
+After installation, tools are in `/usr/local/bin/`:
+
+```bash
+sudo nabla-config     # Works — root PATH includes /usr/local/bin
+sudo nabla-image --help
+```
 
 ### Voice Satellite (Pi)
 

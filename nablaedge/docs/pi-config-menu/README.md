@@ -14,6 +14,20 @@ echo 'deb [trusted=yes] https://coco.nabla.net/apt/ stable main' | \
 sudo apt update && sudo apt install nabla-edge
 ```
 
+Or install manually from source:
+
+```bash
+cd nablaedge
+sudo ./install.sh
+```
+
+After installation, tools are available system-wide at `/usr/local/bin/`:
+
+```bash
+sudo nabla-config     # Works because root PATH includes /usr/local/bin
+sudo nabla-image --help
+```
+
 See [../packages-apt/](../packages-apt/) for full installation details.
 
 ---

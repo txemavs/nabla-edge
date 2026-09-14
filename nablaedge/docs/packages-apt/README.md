@@ -121,32 +121,93 @@ cd nabla-edge && sudo ./install.sh
 
 ---
 
-## Publishing Checklist (Maintainers)
+## Publishing a Release
 
-High-level steps to publish a new release:
+Use the publish script to build and deploy a new version:
 
-1. **Build the `.deb`** — run the package build script (CI or local)
-2. **Add to pool** — place `.deb` in `pool/main/`
-3. **Regenerate metadata**:
-   ```bash
-   apt-ftparchive packages pool/main > dists/stable/main/binary-arm64/Packages
-   gzip -k dists/stable/main/binary-arm64/Packages
-   apt-ftparchive release dists/stable > dists/stable/Release
-   ```
-4. **Sync to HTTP** — push the `apt/` tree to the coco HTTP server
-5. **Verify** — confirm `Release` file is accessible:
-   ```bash
-   curl -I https://coco.nabla.net/apt/dists/stable/Release
-   ```
-6. **Update tarball** — build and upload `nabla-edge.tar.gz` to `/nabla.net/pkgs/`
+```bash
+# From repo root
+./tools/publish-nabla-edge.sh
+```
+
+### Publish Script Options
+
+```bash
+./tools/publish-nabla-edge.sh                    # Patch bump (0.9.0 → 0.9.1)
+./tools/publish-nabla-edge.sh --bump minor       # Minor bump (0.9.0 → 0.10.0)
+./tools/publish-nabla-edge.sh --bump major       # Major bump (0.9.0 → 1.0.0)
+./tools/publish-nabla-edge.sh --version 1.0.0    # Explicit version
+./tools/publish-nabla-edge.sh --dry-run          # Preview without building
+```
+
+### What the Script Does
+
+1. **Bumps version** in `packages/nabla-edge/DEBIAN/control` and `nabla-config`
+2. **Builds** `nabla-edge_<ver>_all.deb` and `nabla-edge.tar.gz`
+3. **Regenerates apt indexes** (Packages, Packages.gz, Release)
+4. **Copies to Coco** (if `COCO_APT` and `COCO_PACKAGES` env vars are set)
+
+### Manual Deployment (No Coco Access)
+
+If you don't have direct Coco access, the script produces artifacts in `build/`:
+
+```bash
+./tools/publish-nabla-edge.sh
+# Outputs:
+#   build/nabla-edge_0.9.1_all.deb
+#   build/nabla-edge.tar.gz
+#   build/nabla-edge_0.9.1.tar.gz
+```
+
+Copy these to Coco manually:
+
+| Artifact | Destination |
+|----------|-------------|
+| `.deb` | `\\coco\nabla.net\apt\pool\main\n\nabla-edge\` |
+| `.tar.gz` | `\\coco\nabla.net\packages\` |
+
+Then regenerate apt indexes on Coco:
+
+```bash
+cd /path/to/apt
+apt-ftparchive packages pool/main > dists/stable/main/binary-arm64/Packages
+gzip -kf dists/stable/main/binary-arm64/Packages
+apt-ftparchive release dists/stable > dists/stable/Release
+```
+
+### Release Checklist
+
+- [ ] Test changes locally on a Pi
+- [ ] Run `./tools/publish-nabla-edge.sh` (bumps version + builds)
+- [ ] Verify `.deb` installs: `sudo dpkg -i build/nabla-edge_*.deb`
+- [ ] Copy to Coco (script does this if env vars set, else manual)
+- [ ] Verify apt works: `curl -fsSL https://coco.nabla.net/apt/dists/stable/Release`
+- [ ] Test upgrade on a Pi: `sudo apt update && sudo apt upgrade nabla-edge`
+- [ ] Commit version bump and push
 
 Details on package metadata live in [`../../../packages/`](../../../packages/).
 
 ---
 
-## Upgrading
+## How Pis Update
 
-Once installed via APT, upgrades are standard Debian:
+Pis can update nabla-edge via two methods:
+
+### 1. Via nabla-config Menu (Recommended)
+
+```bash
+sudo nabla-config
+# → Update → Check for updates
+```
+
+The Update menu:
+- Ensures `/etc/apt/sources.list.d/nabla.list` exists
+- Runs `apt update` and shows available version
+- Offers to upgrade if newer version available
+
+This works even on Pis you can't SSH into — just access the local console.
+
+### 2. Via apt Command Line
 
 ```bash
 sudo apt update
@@ -158,6 +219,29 @@ Or upgrade everything:
 ```bash
 sudo apt update && sudo apt upgrade
 ```
+
+### Fresh Install: APT Source Auto-Installed
+
+Every fresh install (via APT, .deb, or tarball) now configures the APT source automatically:
+
+```
+/etc/apt/sources.list.d/nabla.list
+```
+
+This means:
+- **New Pis** can `apt upgrade` without manual source setup
+- **Existing Pis** get the source added when they upgrade to 0.9.0+
+- **Offline Pis** get the source from firstboot, enabling future upgrades when they connect
+
+### Devices Without SSH Access
+
+For Pis deployed without SSH (e.g., behind NAT, mesh-only):
+
+1. **Console access**: Run `sudo nabla-config` → Update
+2. **Automatic updates**: Set up unattended-upgrades (optional)
+3. **Physical access**: Connect keyboard/monitor, run nabla-config
+
+The APT source is always installed, so any network connectivity enables upgrades.
 
 ---
 

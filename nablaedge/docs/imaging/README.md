@@ -183,13 +183,57 @@ The Raspberry Pi 3B requires a one-time OTP (One-Time Programmable) bit to enabl
 - OTP bit permanently enables USB boot capability
 - Only needs to be set once per Pi
 
-### Enabling OTP
+### The OTP Enabler SD (Recommended)
+
+The **OTP enabler** is a minimal bootable SD image (~50-100MB) that:
+
+- Displays diagnostic text on HDMI
+- Shows Pi model, serial number, hardware info
+- Scans attached USB drives for Nabla OS
+- Programs the OTP fuse automatically
+- Fits on a **256MB SD card**
 
 ```bash
-# Via nabla-image
-sudo nabla-image --enable-otp
+# Create OTP enabler SD
+sudo nabla-image write-otp /dev/sdX
+```
 
-# Manual method (on running Pi)
+#### Display Output
+
+```
+    NABLA OTP ENABLER
+    Programming USB boot fuse (Pi 3B)
+
+    Hardware
+    Model:    Raspberry Pi 3 Model B Rev 1.2
+    Serial:   00000000abcd1234
+
+    OTP Status
+    OK USB boot fuse programmed by GPU firmware
+
+    USB Storage
+    /dev/sda: 32GB SanDisk Cruzer
+    USB: Nabla OS detected on /dev/sda1
+
+    System will halt in 120 seconds
+```
+
+#### Using the OTP Enabler
+
+1. Write OTP enabler to SD: `sudo nabla-image write-otp /dev/sdX`
+2. Insert SD into Pi 3B
+3. Connect HDMI monitor
+4. Power on and verify display output
+5. Wait for countdown to complete
+6. Power off when finished, then remove this SD to boot from USB
+
+See [`../../scripts/otp-enabler/README.md`](../../scripts/otp-enabler/README.md) for full details.
+
+### Manual Method (Legacy)
+
+If you have a running Pi OS, you can enable OTP manually:
+
+```bash
 echo program_usb_boot_mode=1 | sudo tee -a /boot/config.txt
 sudo reboot
 # After reboot, remove the line from config.txt
@@ -197,10 +241,18 @@ sudo reboot
 
 ### Verification
 
+After OTP programming, verify the fuse was burned:
+
 ```bash
 vcgencmd otp_dump | grep 17:
-# Should show: 17:3020000a (bit set)
 ```
+
+**Expected output:**
+```
+17:3020000a
+```
+
+If you see `17:1020000a`, the fuse was not programmed. Re-run the OTP enabler.
 
 **Note**: Pi 4 and Pi 5 support USB boot natively — no OTP needed.
 
@@ -224,17 +276,42 @@ This is triggered via udev rules calling `nabla-config --usb-dialog`.
 ## Command Reference
 
 ```
-nabla-image [OPTIONS]
+nabla-image COMMAND [OPTIONS]
+
+COMMANDS:
+  write-usb DEVICE        Write Nabla Pi OS to USB/SD drive
+      --desktop           Use desktop image
+      --lite              Use lite image (default)
+      --hostname NAME     Set hostname (default: edge)
+      --octeto N          Subnet 10.100.N.0/24 (default: 3)
+      --site NAME         Site identifier (default: demo)
+
+  write-otp DEVICE        Write OTP enabler for Pi 3B USB boot
+                          Creates tiny diagnostic SD (~50MB)
+
+  build-otp               Build OTP enabler image file only
+
+  fetch-base TYPE         Download base image (desktop or lite)
 
 OPTIONS:
+  --list, -l              List available target drives
   --help, -h              Show help
-  --list                  List available target drives
-  --target DEVICE         Target device (e.g., /dev/sdb)
-  --site NAME             Site identifier (default: demo)
-  --image URL             Custom image URL (default: latest Pi OS)
-  --enable-otp            Enable USB boot OTP on Pi 3B
-  --dry-run               Show what would be done
-  --verify                Verify write after completion
+```
+
+### Examples
+
+```bash
+# List available drives
+sudo nabla-image --list
+
+# Write Nabla Pi OS lite to USB
+sudo nabla-image write-usb /dev/sdb --lite --hostname mypi
+
+# Write OTP enabler to SD (Pi 3B only)
+sudo nabla-image write-otp /dev/sdc
+
+# Build OTP image without writing
+nabla-image build-otp
 ```
 
 ---

@@ -1,0 +1,417 @@
+#!/bin/bash
+# nabla-image — Nabla Edge SD/USB imaging tool
+# Creates bootable media with Nabla OS or OTP enabler
+#
+# Usage:
+#   nabla-image write-usb DEVICE [OPTIONS]    Write Nabla Pi OS
+#   nabla-image write-otp DEVICE              Write OTP enabler (Pi 3B)
+#   nabla-image fetch-base [desktop|lite]     Download base image
+#   nabla-image --list                        List available drives
+#
+set -euo pipefail
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+OTP_BUILDER="$SCRIPT_DIR/otp-enabler/build-otp-image"
+
+# Directories
+CACHE_DIR="${HOME}/.cache/nabla-image"
+OTP_CACHE_DIR="${HOME}/.cache/nabla-otp"
+
+# URLs
+PIOS_DESKTOP_URL="https://downloads.raspberrypi.org/raspios_arm64/images/"
+PIOS_LITE_URL="https://downloads.raspberrypi.org/raspios_lite_arm64/images/"
+NABLA_EDGE_URL="https://coco.nabla.net/nabla.net/pkgs/nabla-edge.tar.gz"
+
+log() { echo ">>> $*"; }
+err() { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARNING: $*" >&2; }
+
+usage() {
+    cat <<EOF
+Usage: nabla-image COMMAND [OPTIONS]
+
+Nabla Edge SD/USB imaging tool v$VERSION
+
+COMMANDS:
+    write-usb DEVICE    Write Nabla Pi OS to USB/SD drive
+        --desktop       Use desktop image (default: lite)
+        --lite          Use lite image
+        --hostname NAME Set hostname (default: edge)
+        --octeto N      Subnet 10.100.N.0/24 (default: 3)
+        --site NAME     Site identifier (default: demo)
+
+    write-otp DEVICE    Write OTP enabler for Pi 3B USB boot
+                        Creates tiny diagnostic SD (~50MB)
+                        Shows on-screen text, detects Nabla USB
+
+    fetch-base TYPE     Download base image (desktop or lite)
+    
+    build-otp           Build OTP enabler image file only
+
+    --list              List available target drives
+    --help, -h          Show this help
+
+EXAMPLES:
+    # Write Nabla Pi OS lite to /dev/sdb
+    sudo nabla-image write-usb /dev/sdb --lite --hostname mypi
+
+    # Create OTP enabler SD (Pi 3B USB boot fuse)
+    sudo nabla-image write-otp /dev/sdc
+
+    # Build OTP image without writing
+    nabla-image build-otp
+
+FILES:
+    ~/.cache/nabla-image/   Downloaded Pi OS images
+    ~/.cache/nabla-otp/     OTP enabler components
+
+EOF
+    exit 0
+}
+
+need_root() {
+    [ "$(id -u)" -eq 0 ] || err "Requires root: sudo nabla-image $*"
+}
+
+list_drives() {
+    echo "Available drives (excluding system disk):"
+    echo ""
+    
+    local root_disk
+    root_disk="$(lsblk -no PKNAME "$(findmnt -n -o SOURCE /)" 2>/dev/null || true)"
+    
+    lsblk -d -o NAME,SIZE,TYPE,TRAN,MODEL 2>/dev/null | while read -r name size typ tran model; do
+        [ "$typ" = "disk" ] || continue
+        case "$name" in
+            NAME|loop*|zram*|ram*|dm-*) continue ;;
+        esac
+        [ "$name" = "$root_disk" ] && continue
+        
+        echo "  /dev/$name  $size  $tran  $model"
+    done
+    echo ""
+}
+
+validate_device() {
+    local dev="$1"
+    [ -b "$dev" ] || err "Not a block device: $dev"
+    
+    # Check it's not the system disk
+    local root_disk
+    root_disk="$(lsblk -no PKNAME "$(findmnt -n -o SOURCE /)" 2>/dev/null || true)"
+    local dev_name="${dev##*/}"
+    
+    if [ "$dev_name" = "$root_disk" ]; then
+        err "Refusing to write to system disk: $dev"
+    fi
+    
+    # Check for boot partition
+    local boot_src boot_pk
+    boot_src="$(findmnt -n -o SOURCE /boot/firmware 2>/dev/null || findmnt -n -o SOURCE /boot 2>/dev/null || true)"
+    if [ -n "$boot_src" ]; then
+        boot_pk="$(lsblk -no PKNAME "$boot_src" 2>/dev/null || true)"
+        [ "$dev_name" = "$boot_pk" ] && err "Refusing to write to boot disk: $dev"
+    fi
+}
+
+unmount_device() {
+    local dev="$1"
+    log "Unmounting partitions on $dev..."
+    
+    for part in $(lsblk -ln -o NAME "$dev" 2>/dev/null | tail -n +2); do
+        umount -f "/dev/$part" 2>/dev/null || true
+    done
+    umount -f "$dev" 2>/dev/null || true
+    sleep 1
+}
+
+# --- OTP ENABLER ---
+
+cmd_write_otp() {
+    local dev="$1"
+    need_root
+    validate_device "$dev"
+    
+    local otp_image="$OTP_CACHE_DIR/otp-enabler.img"
+    
+    # Build OTP image if needed
+    if [ ! -f "$otp_image" ] || [ "${FORCE_REBUILD:-0}" = "1" ]; then
+        log "Building OTP enabler image..."
+        if [ -x "$OTP_BUILDER" ]; then
+            "$OTP_BUILDER" --output "$otp_image" --cache-dir "$OTP_CACHE_DIR"
+        else
+            err "OTP builder not found: $OTP_BUILDER"
+        fi
+    else
+        log "Using cached OTP image: $otp_image"
+    fi
+    
+    [ -f "$otp_image" ] || err "OTP image not found: $otp_image"
+    
+    local img_size
+    img_size=$(stat -c%s "$otp_image" 2>/dev/null || stat -f%z "$otp_image")
+    local img_mb=$((img_size / 1024 / 1024))
+    
+    log ""
+    log "=== Nabla OTP Enabler ==="
+    log "Image:  $otp_image (${img_mb}MB)"
+    log "Target: $dev"
+    log ""
+    log "This will:"
+    log "  - ERASE all data on $dev"
+    log "  - Create bootable OTP enabler SD"
+    log "  - Pi 3B will burn USB-boot fuse when booted"
+    log ""
+    
+    read -r -p "Continue? [y/N] " confirm
+    case "$confirm" in
+        y|Y|yes|YES) ;;
+        *) log "Aborted."; exit 0 ;;
+    esac
+    
+    unmount_device "$dev"
+    
+    log "Writing image to $dev..."
+    dd if="$otp_image" of="$dev" bs=4M status=progress conv=fsync
+    sync
+    
+    log ""
+    log "OTP enabler written to $dev"
+    log ""
+    log "Next steps:"
+    log "  1. Insert SD into Pi 3B"
+    log "  2. Connect HDMI monitor"
+    log "  3. Power on and verify display output"
+    log "  4. Wait for countdown to complete"
+    log "  5. Power off when finished"
+    log "  6. Remove SD, insert Nabla OS USB, power on"
+    log ""
+    log "Verify OTP: vcgencmd otp_dump | grep 17:"
+    log "Expected:   17:3020000a"
+}
+
+cmd_build_otp() {
+    local otp_image="${1:-$OTP_CACHE_DIR/otp-enabler.img}"
+    
+    log "Building OTP enabler image..."
+    if [ -x "$OTP_BUILDER" ]; then
+        "$OTP_BUILDER" --output "$otp_image" --cache-dir "$OTP_CACHE_DIR" --clean
+    else
+        err "OTP builder not found: $OTP_BUILDER"
+    fi
+    
+    log ""
+    log "OTP image ready: $otp_image"
+    log "Write with: sudo dd if=$otp_image of=/dev/sdX bs=4M status=progress"
+}
+
+# --- NABLA OS ---
+
+fetch_latest_pios_url() {
+    local base_url="$1"
+    local variant="$2"
+    
+    # Get the latest directory
+    local latest_dir
+    latest_dir=$(curl -fsSL "$base_url" 2>/dev/null | \
+        grep -oE 'raspios[^"]+/' | \
+        sort -V | tail -1)
+    
+    [ -n "$latest_dir" ] || err "Could not find latest Pi OS image"
+    
+    # Get the image filename
+    local img_name
+    img_name=$(curl -fsSL "${base_url}${latest_dir}" 2>/dev/null | \
+        grep -oE '[^"]+\.img\.xz' | head -1)
+    
+    [ -n "$img_name" ] || err "Could not find image file in $latest_dir"
+    
+    echo "${base_url}${latest_dir}${img_name}"
+}
+
+cmd_fetch_base() {
+    local variant="${1:-lite}"
+    mkdir -p "$CACHE_DIR"
+    
+    local base_url
+    case "$variant" in
+        desktop|full) base_url="$PIOS_DESKTOP_URL" ;;
+        lite|minimal) base_url="$PIOS_LITE_URL" ;;
+        *) err "Unknown variant: $variant (use: desktop or lite)" ;;
+    esac
+    
+    log "Finding latest Pi OS $variant image..."
+    local img_url
+    img_url=$(fetch_latest_pios_url "$base_url" "$variant")
+    
+    local img_name="${img_url##*/}"
+    local img_path="$CACHE_DIR/$img_name"
+    
+    if [ -f "$img_path" ]; then
+        log "Already cached: $img_path"
+    else
+        log "Downloading: $img_url"
+        curl -fSL --progress-bar -o "$img_path.tmp" "$img_url"
+        mv "$img_path.tmp" "$img_path"
+        log "Downloaded: $img_path"
+    fi
+    
+    echo "$img_path"
+}
+
+cmd_write_usb() {
+    local dev="$1"
+    shift
+    
+    need_root
+    validate_device "$dev"
+    
+    # Parse options
+    local variant="lite"
+    local hostname="edge"
+    local octeto="3"
+    local site="demo"
+    
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --desktop) variant="desktop"; shift ;;
+            --lite) variant="lite"; shift ;;
+            --hostname) hostname="$2"; shift 2 ;;
+            --octeto) octeto="$2"; shift 2 ;;
+            --site) site="$2"; shift 2 ;;
+            *) err "Unknown option: $1" ;;
+        esac
+    done
+    
+    log "=== Nabla Pi OS Writer ==="
+    log "Variant:  $variant"
+    log "Hostname: $hostname"
+    log "Octeto:   $octeto (10.100.$octeto.0/24)"
+    log "Site:     $site"
+    log "Target:   $dev"
+    log ""
+    
+    # Fetch base image
+    local img_path
+    img_path=$(cmd_fetch_base "$variant")
+    
+    log ""
+    log "This will ERASE all data on $dev"
+    read -r -p "Continue? [y/N] " confirm
+    case "$confirm" in
+        y|Y|yes|YES) ;;
+        *) log "Aborted."; exit 0 ;;
+    esac
+    
+    unmount_device "$dev"
+    
+    # Write image
+    log "Writing image to $dev (this takes a while)..."
+    if [[ "$img_path" == *.xz ]]; then
+        xz -dc "$img_path" | dd of="$dev" bs=4M status=progress conv=fsync
+    else
+        dd if="$img_path" of="$dev" bs=4M status=progress conv=fsync
+    fi
+    sync
+    
+    # Wait for partitions
+    sleep 2
+    partprobe "$dev" 2>/dev/null || true
+    sleep 2
+    
+    # Find boot partition
+    local boot_part=""
+    for p in "${dev}1" "${dev}p1"; do
+        [ -b "$p" ] && { boot_part="$p"; break; }
+    done
+    [ -n "$boot_part" ] || err "Could not find boot partition"
+    
+    # Mount boot partition
+    local mount_point
+    mount_point=$(mktemp -d)
+    mount "$boot_part" "$mount_point"
+    
+    log "Injecting Nabla first-boot configuration..."
+    
+    # Create nabla config directory
+    mkdir -p "$mount_point/nabla"
+    
+    # Site config
+    cat > "$mount_point/nabla/site.conf" <<EOF
+# Nabla Edge site configuration
+SITE="$site"
+HOSTNAME="$hostname"
+OCTETO="$octeto"
+EOF
+    
+    # Hostname in standard Pi OS location
+    echo "$hostname" > "$mount_point/hostname"
+    
+    # Enable SSH
+    touch "$mount_point/ssh"
+    
+    # Download Nabla Edge tarball
+    log "Downloading Nabla Edge package..."
+    if curl -fsSL -o "$mount_point/nabla-edge.tar.gz" "$NABLA_EDGE_URL" 2>/dev/null; then
+        log "Nabla Edge package added"
+    else
+        warn "Could not download nabla-edge.tar.gz (will install via APT on first boot)"
+    fi
+    
+    # Create first-boot marker
+    cat > "$mount_point/nabla-firstboot" <<'FIRSTBOOT'
+#!/bin/bash
+# Nabla Edge first-boot marker
+# This file triggers the first-boot installer
+NABLA_FIRSTBOOT=1
+FIRSTBOOT
+    
+    # Cleanup
+    sync
+    umount "$mount_point"
+    rmdir "$mount_point"
+    
+    log ""
+    log "=== Nabla Pi OS written to $dev ==="
+    log ""
+    log "Boot sequence:"
+    log "  1. Insert media into Pi"
+    log "  2. First boot runs Pi OS setup"
+    log "  3. Nabla Edge installs automatically"
+    log "  4. SSH available at: ssh pi@$hostname.local"
+    log ""
+}
+
+# --- MAIN ---
+
+main() {
+    case "${1:-}" in
+        write-otp)
+            [ -n "${2:-}" ] || err "Usage: nabla-image write-otp DEVICE"
+            cmd_write_otp "$2"
+            ;;
+        write-usb)
+            [ -n "${2:-}" ] || err "Usage: nabla-image write-usb DEVICE [OPTIONS]"
+            shift
+            cmd_write_usb "$@"
+            ;;
+        build-otp)
+            cmd_build_otp "${2:-}"
+            ;;
+        fetch-base)
+            cmd_fetch_base "${2:-lite}"
+            ;;
+        --list|-l|list)
+            list_drives
+            ;;
+        --help|-h|help|"")
+            usage
+            ;;
+        *)
+            err "Unknown command: $1"
+            ;;
+    esac
+}
+
+main "$@"

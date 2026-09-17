@@ -1,245 +1,356 @@
 # Network Modes — Nabla Net
 
-How Nabla Net LAN modes work: `cable` | `ap` | `cable-ap` | `off`.
+How Nabla Net LAN modes work via `vpn-mode`: `cable` | `ap` | `cable-ap` | `off` | `status`.
+
+Golden reference: verified on gateway Pis using cable mode with WiFi uplink, eth0 as
+private LAN gateway (.1), dnsmasq with `bind-dynamic`, and systemd `Restart=on-failure`.
 
 ---
 
 ## Overview
 
-Nabla Net manages the local network for edge nodes. Each Pi can operate in one of four modes:
+Nabla Net provides private LAN gateway functionality for edge node clusters. A gateway
+Pi connects to the site network (via WiFi or Ethernet uplink) and provides DHCP to
+downstream client Pis on its eth0 interface.
 
-| Mode | Uplink | LAN AP | Use Case |
-|------|--------|--------|----------|
-| `cable` | Ethernet | No | Node connects to existing network |
-| `ap` | WiFi client | Yes | Node creates WiFi AP, uplinks via WiFi |
-| `cable-ap` | Ethernet | Yes | Node creates WiFi AP, uplinks via Ethernet |
-| `off` | None | No | Networking disabled |
-
----
-
-## Mode: cable
-
-**Ethernet uplink, no WiFi AP**
-
-```mermaid
-flowchart LR
-    Router[Upstream Router] -->|Ethernet| Pi[Edge Node]
-    Pi --> Services[Local Services]
-```
-
-The simplest mode:
-- Pi connects via Ethernet cable
-- Gets IP from upstream DHCP
-- No WiFi broadcasting
-
-**When to use**: Node near Ethernet, no need for local WiFi.
-
----
-
-## Mode: ap
-
-**WiFi AP with WiFi client uplink**
-
-```mermaid
-flowchart LR
-    Router[Upstream Router] -.->|WiFi| Pi[Edge Node]
-    Pi -->|AP| Clients[WiFi Clients]
-```
-
-Dual WiFi radio mode:
-- Primary radio: Connect to upstream WiFi
-- Secondary radio (or same via AP mode): Broadcast local AP
-
-**When to use**: No Ethernet available, need local WiFi for other devices.
-
-**Note**: Requires dual-band adapter or compatible chipset for simultaneous client+AP.
-
----
-
-## Mode: cable-ap
-
-**Ethernet uplink + WiFi AP**
-
-```mermaid
-flowchart LR
-    Router[Upstream Router] -->|Ethernet| Pi[Edge Node]
-    Pi -->|WiFi AP| Clients[WiFi Clients]
-```
-
-Most common gateway mode:
-- Ethernet provides reliable uplink
-- WiFi broadcasts local AP for edge devices
-
-**When to use**: Primary gateway node with Ethernet access.
-
----
-
-## Mode: off
-
-**Networking disabled**
-
-For maintenance or isolated operation:
-- No network interfaces active
-- Node operates standalone
-- Use for initial imaging or recovery
+| Mode | Uplink | LAN Interface | DHCP | Use Case |
+|------|--------|---------------|------|----------|
+| `cable` | WiFi | eth0 | Yes (.50–.200) | Gateway with WiFi uplink, eth0 serves clients |
+| `ap` | Ethernet | WiFi AP | Yes | Node creates WiFi AP, uplinks via eth |
+| `cable-ap` | WiFi | eth0 + wlan1 bridged | Yes | Both wired + wireless clients on same subnet |
+| `off` | — | — | No | Disable gateway mode |
+| `status` | — | — | — | Show current configuration |
 
 ---
 
 ## Subnet Pattern
 
-Nabla Net uses a documentation-safe subnet pattern:
+Each gateway uses a unique /24 subnet based on its hostname or configured octet:
 
 ```
-192.0.2.0/24   (TEST-NET-1, RFC 5737)
+10.100.N.0/24   where N = octet (1–254)
 ```
 
-In actual deployments, you would use your own private subnet. The `192.0.2.x` range is reserved for documentation and never routed on the internet.
+| Example Hostname | Octet | Subnet | Gateway IP |
+|------------------|-------|--------|------------|
+| gateway1 | 1 | 10.100.1.0/24 | 10.100.1.1 |
+| gateway2 | 2 | 10.100.2.0/24 | 10.100.2.1 |
+| edge-13 | 13 | 10.100.13.0/24 | 10.100.13.1 |
 
-**Example configuration** (not real values):
+The octet is derived from hostname patterns or set via `VPN_MODE_OCTETO` environment variable.
 
-```
-Gateway:   192.0.2.1
-DHCP pool: 192.0.2.100 - 192.0.2.200
-Node IPs:  192.0.2.10, 192.0.2.11, ...
-```
+**DHCP pool**: `.50` – `.200` (12h lease)
+**Gateway/router**: `.1`
 
 ---
 
-## Configuration
+## Mode: cable (Golden Reference)
 
-### Via nabla-config
+**WiFi uplink → eth0 gateway for client Pis**
+
+This is the primary gateway mode, verified on production gateways:
+
+```mermaid
+flowchart LR
+    Internet[Internet] --> Router[Site Router]
+    Router -.->|WiFi| Gateway[Gateway Pi<br/>wlan0 client]
+    Gateway -->|eth0<br/>10.100.N.1| Switch[Switch/Hub]
+    Switch --> Pi1[Client Pi 1<br/>.50–.200]
+    Switch --> Pi2[Client Pi 2<br/>.50–.200]
+    Gateway -.->|Tailscale| TS[Tailnet<br/>advertises 10.100.N.0/24]
+```
+
+**What happens:**
+
+1. Gateway Pi connects to site WiFi (wlan0) — gets upstream IP via DHCP
+2. eth0 configured as 10.100.N.1/24 (static)
+3. dnsmasq provides DHCP on eth0 (pool .50–.200)
+4. nftables NAT forwards client traffic through wlan0
+5. Tailscale advertises subnet to tailnet
+
+**Usage:**
 
 ```bash
-sudo nabla-config --network
-# Select "Modo de red" → choose mode
+sudo vpn-mode cable
 ```
 
-### Via config file
-
-Edit `/etc/nabla-net/network.conf`:
-
-```ini
-# Network mode
-mode=cable-ap
-
-# WiFi AP settings (used when mode includes 'ap')
-ap_ssid=CHANGE_ME
-ap_password=CHANGE_ME
-ap_channel=6
-ap_band=2.4GHz
-```
-
-### Environment file
-
-For sensitive values, use `/etc/nabla-net/wifi.env`:
-
-```bash
-# WiFi credentials - CHANGE THESE
-WIFI_SSID=CHANGE_ME
-WIFI_PASSWORD=CHANGE_ME
-```
+**Note:** eth0 often shows NO-CARRIER until a client Pi is physically connected. This is normal — dnsmasq uses `bind-dynamic` to handle interfaces appearing/disappearing.
 
 ---
 
-## Checking Status
+## Mode: ap
+
+**Ethernet uplink → WiFi AP for clients**
+
+```mermaid
+flowchart LR
+    Router[Upstream Router] -->|Ethernet| Pi[Gateway Pi<br/>eth0 uplink]
+    Pi -->|WiFi AP<br/>Nabla Net| Client1[Client 1]
+    Pi -->|WiFi AP| Client2[Client 2]
+```
+
+- eth0: uplink to router (DHCP client)
+- wlan0: Access Point mode (SSID: "Nabla Net")
+- Clients connect to WiFi, get 10.100.N.x addresses
+
+**Usage:**
 
 ```bash
-# Via nabla-config
-sudo nabla-config --network
-# Select "Estado"
+sudo vpn-mode ap
+```
 
-# Direct command
-nabla-net status
+**Requirements:**
+- WiFi chipset must support AP mode
+- AP password in `~/.config/nabla-net-ap.env`
+
+---
+
+## Mode: cable-ap
+
+**WiFi uplink → eth0 + wlan1 AP bridged**
+
+```mermaid
+flowchart LR
+    Router[Site Router] -.->|WiFi| Gateway[Gateway Pi<br/>wlan0 uplink]
+    Gateway -->|eth0<br/>bridge| Switch[Switch]
+    Gateway -->|wlan1 AP<br/>bridge| WClient[WiFi Client]
+    Switch --> Pi1[Wired Pi 1]
+    Switch --> Pi2[Wired Pi 2]
+```
+
+Both wired (eth0) and wireless (wlan1 AP) clients share the same 10.100.N.0/24 subnet
+via a Linux bridge.
+
+**Usage:**
+
+```bash
+sudo vpn-mode cable-ap
+```
+
+**Requirements:**
+- Second WiFi adapter (e.g., USB dongle like Atheros WNA1100)
+- AP password in `~/.config/nabla-net-ap.env`
+
+---
+
+## Mode: off
+
+Disables gateway mode and restores normal networking:
+
+```bash
+sudo vpn-mode off
+```
+
+- Removes NetworkManager connections
+- Clears nftables rules
+- Disables IP forwarding
+- Stops advertising Tailscale subnet
+
+---
+
+## Mode: status
+
+Shows current configuration without changes:
+
+```bash
+vpn-mode status
 ```
 
 Output example:
 
 ```
-Mode: cable-ap
-Uplink: eth0 (connected)
-  IP: 192.0.2.50/24
-  Gateway: 192.0.2.1
-AP: wlan0 (active)
-  SSID: nabla-demo
-  Clients: 2
+host=gateway1 octeto=1 subnet=10.100.1.0/24
+eth=eth0 wlan=wlan0 wlan_ap=none br=br-nabla1 home=/home/pi
+state=cable
+eth0             UP             52:54:00:12:34:56
+wlan0            UP             dc:a6:32:xx:xx:xx
+eth0             10.100.1.1/24
+wlan0            (upstream DHCP)
+vpn-mode-eth-1:eth0:ethernet:activated
+1
+active
+AdvertiseRoutes: [10.100.1.0/24]
 ```
 
 ---
 
-## How Mode Switching Works
+## dnsmasq Configuration
 
-```mermaid
-stateDiagram-v2
-    [*] --> cable: Default
-    cable --> ap: nabla-net set-mode ap
-    cable --> cable_ap: nabla-net set-mode cable-ap
-    ap --> cable: nabla-net set-mode cable
-    cable_ap --> cable: nabla-net set-mode cable
-    cable --> off: nabla-net set-mode off
-    off --> cable: nabla-net set-mode cable
+The `vpn-mode` script creates per-octet dnsmasq config at `/etc/dnsmasq.d/vpn-mode-N.conf`:
+
+```ini
+interface=eth0
+bind-dynamic
+dhcp-range=10.100.1.50,10.100.1.200,12h
+dhcp-option=option:router,10.100.1.1
+dhcp-option=option:dns-server,1.1.1.1,8.8.8.8
+domain-needed
+bogus-priv
 ```
 
-When mode changes:
+### bind-dynamic
 
-1. `nabla-net` stops current services
-2. Reconfigures interfaces
-3. Starts services for new mode
-4. Updates `/etc/nabla-net/network.conf`
+The `bind-dynamic` option is **critical** for gateway Pis:
+
+- Allows dnsmasq to bind to interfaces that appear after startup
+- Handles eth0 NO-CARRIER state when no client is plugged in
+- Survives network reconfigurations without restart
+
+### systemd Drop-in (Restart=on-failure)
+
+A systemd drop-in ensures dnsmasq survives boot races:
+
+**File:** `/etc/systemd/system/dnsmasq.service.d/nabla-vpn-mode.conf`
+
+```ini
+[Unit]
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Restart=on-failure
+RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=20
+```
+
+This drop-in is installed automatically by `vpn-mode` on first run.
 
 ---
 
-## Bridged vs Routed
+## Tailscale Integration
 
-### Bridged (Layer 2)
+When gateway mode is enabled, `vpn-mode` automatically:
 
-All devices on same subnet:
+1. Advertises the subnet to your tailnet:
+   ```bash
+   tailscale set --advertise-routes="10.100.N.0/24" --accept-routes
+   ```
 
-```
-Upstream: 192.0.2.0/24
-   ↓ (bridged)
-Nabla Net: 192.0.2.0/24
-```
+2. On first use, approve the route in Tailscale admin console
 
-Simpler, but upstream sees all devices.
-
-### Routed (Layer 3)
-
-Separate subnets with NAT:
-
-```
-Upstream: 192.0.2.0/24
-   ↓ (NAT)
-Nabla Net: 198.51.100.0/24
-```
-
-More isolation, Pi acts as router.
-
-Current implementation uses **bridged** mode for simplicity.
+3. Remote machines on the tailnet can then reach client Pis directly
 
 ---
 
-## PDFs
+## AP Password Configuration
 
-Reference materials in [pdf/](pdf/):
+Modes that create a WiFi AP (`ap`, `cable-ap`) require an AP password file:
 
-| File | Content |
-|------|---------|
-| `nabla-edge-ejemplos.pdf` | Network configuration examples |
+**File:** `~/.config/nabla-net-ap.env`
 
-*(Binary PDFs to be committed separately)*
+```bash
+NABLA_NET_AP_PASSWORD=YOUR_SECRET_HERE
+```
+
+**Important:** This file is NOT committed to git. Create it manually on each gateway.
 
 ---
 
-## How to Change This
+## Environment Variables
 
-1. Edit this `README.md` for concept changes
-2. Add examples to `pdf/` (after sanitization check)
-3. Update `nabla-config` menu if adding options
-4. Keep placeholder IPs (`192.0.2.x`) and SSIDs (`CHANGE_ME`)
+Override auto-detection with environment variables:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `VPN_MODE_OCTETO` | Subnet octet (1–254) | `VPN_MODE_OCTETO=3` |
+| `VPN_MODE_ETH` | Ethernet interface | `VPN_MODE_ETH=enp0s3` |
+| `VPN_MODE_WLAN` | Primary WiFi interface | `VPN_MODE_WLAN=wlp2s0` |
+| `VPN_MODE_WLAN_AP` | Secondary WiFi for cable-ap | `VPN_MODE_WLAN_AP=wlan1` |
+
+---
+
+## Installation
+
+### From nabla-edge package (recommended)
+
+```bash
+sudo apt install nabla-edge
+# vpn-mode installed to /usr/local/bin/
+```
+
+### Manual install
+
+```bash
+# Copy script
+sudo cp vpn-mode /usr/local/bin/vpn-mode
+sudo chmod +x /usr/local/bin/vpn-mode
+
+# Create AP password (if using ap/cable-ap modes)
+mkdir -p ~/.config
+echo 'NABLA_NET_AP_PASSWORD=YOUR_SECRET_HERE' > ~/.config/nabla-net-ap.env
+chmod 600 ~/.config/nabla-net-ap.env
+```
+
+### First-boot imaging
+
+When imaging new Pis with `nabla-image`, the first-boot sequence installs `vpn-mode`
+to `/usr/local/bin/`. See [../imaging/](../imaging/).
+
+---
+
+## Troubleshooting
+
+### eth0 shows NO-CARRIER
+
+Normal when no client Pi is plugged in. dnsmasq uses `bind-dynamic` to handle this.
+
+### dnsmasq fails at boot
+
+The systemd drop-in handles boot races. Check:
+
+```bash
+systemctl status dnsmasq
+journalctl -u dnsmasq
+```
+
+If it keeps failing, the drop-in may not be installed:
+
+```bash
+sudo vpn-mode cable  # reinstalls drop-in
+```
+
+### Client Pi doesn't get DHCP
+
+1. Check dnsmasq is running: `systemctl is-active dnsmasq`
+2. Check config exists: `cat /etc/dnsmasq.d/vpn-mode-*.conf`
+3. Check interface IP: `ip addr show eth0`
+4. Try forcing a new DHCP request on client: `sudo dhclient -r eth0 && sudo dhclient eth0`
+
+### Tailscale subnet not reachable
+
+1. Check route is advertised: `tailscale status`
+2. Approve route in Tailscale admin console
+3. Check IP forwarding: `sysctl net.ipv4.ip_forward` (should be 1)
+
+---
+
+## Command Reference
+
+```
+vpn-mode cable|ap|cable-ap|off|status
+
+Modes:
+  cable     eth0 is gateway (10.100.N.1/24), WiFi uplink, DHCP for clients
+  ap        WiFi AP mode (Nabla Net SSID), eth uplink
+  cable-ap  eth LAN + AP on 2nd Wi-Fi (same subnet bridged)
+  off       disable LAN gateway, restore normal networking
+  status    show current state
+
+Files:
+  /etc/dnsmasq.d/vpn-mode-N.conf              dnsmasq config
+  /etc/systemd/system/dnsmasq.service.d/      systemd drop-in
+  /etc/nftables.d/vpn-mode-N.nft              NAT rules
+  /etc/sysctl.d/99-vpn-mode-forward.conf      IP forwarding
+  ~/.config/vpn-mode.state                    current mode state
+  ~/.config/nabla-net-ap.env                  AP password
+```
 
 ---
 
 ## Related
 
-- [../pi-config-menu/](../pi-config-menu/) — nabla-config tool
-- [../architecture/](../architecture/) — System overview
+- [`../../scripts/vpn-mode`](../../scripts/vpn-mode) — The script itself
+- [../pi-config-menu/](../pi-config-menu/) — nabla-config GUI wrapper
+- [../imaging/](../imaging/) — First-boot installation
+- [../packages-apt/](../packages-apt/) — APT installation

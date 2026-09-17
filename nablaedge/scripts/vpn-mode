@@ -1,0 +1,418 @@
+#!/bin/bash
+# vpn-mode — Private LAN gateway + Tailscale (Nabla Net)
+#   cable | ap | cable-ap | off | status
+#   cable-ap = eth LAN + AP Nabla Net on 2nd Wi-Fi (wlan1), same 10.100.x subnet
+# Subnet pattern: 10.100.N.0/24 where N = octet derived from hostname
+#   Example: gateway1 → 10.100.1.0/24, gateway2 → 10.100.2.0/24
+#
+# Golden reference: verified on monitor1 (cable mode, WiFi uplink, eth0 gateway .1)
+#   and monitor2 (same pattern, octet 2). Both use bind-dynamic dnsmasq + Restart=on-failure.
+#
+# INSTALLATION:
+#   Copy to /usr/local/bin/vpn-mode (chmod +x)
+#   Create ~/.config/nabla-net-ap.env with NABLA_NET_AP_PASSWORD=YOUR_SECRET_HERE
+#   Install dnsmasq systemd drop-in (see ensure_dnsmasq function)
+#
+# Environment overrides:
+#   VPN_MODE_OCTETO  — subnet octet (default: derived from hostname)
+#   VPN_MODE_ETH     — ethernet interface (default: auto-detect)
+#   VPN_MODE_WLAN    — primary WiFi interface (default: auto-detect)
+#   VPN_MODE_WLAN_AP — secondary WiFi for cable-ap mode
+set -euo pipefail
+
+OWNER="${SUDO_USER:-$USER}"
+REAL_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
+REAL_HOME="${REAL_HOME:-$HOME}"
+
+HOST="$(hostname -s 2>/dev/null || hostname)"
+HOST_LC="$(echo "$HOST" | tr '[:upper:]' '[:lower:]')"
+OCTETO="${VPN_MODE_OCTETO:-}"
+if [ -z "$OCTETO" ]; then
+  case "$HOST_LC" in
+    # Example patterns — customize for your fleet:
+    # gateway2|monitor2) OCTETO=2 ;;
+    # imac|mac-*) OCTETO=13 ;;
+    # pi-109) OCTETO=109 ;;
+    *) OCTETO=1 ;;
+  esac
+fi
+
+SUBNET="10.100.${OCTETO}.0/24"
+ADDR="10.100.${OCTETO}.1/24"
+GW_IP="10.100.${OCTETO}.1"
+DHCP_RANGE="10.100.${OCTETO}.50,10.100.${OCTETO}.200,12h"
+
+# Auto-detect NICs (override with VPN_MODE_ETH / VPN_MODE_WLAN)
+IFACE_ETH="${VPN_MODE_ETH:-}"
+IFACE_WLAN="${VPN_MODE_WLAN:-}"
+if [ -z "$IFACE_ETH" ] || [ -z "$IFACE_WLAN" ]; then
+  while read -r name; do
+    case "$name" in
+      lo|tailscale*|docker*|veth*|br*|virbr*|wlan*|wlp*|wlx*) ;;
+      eth*|en*|em*) [ -z "$IFACE_ETH" ] && IFACE_ETH="$name" ;;
+    esac
+  done < <(ls /sys/class/net)
+  while read -r name; do
+    case "$name" in
+      wlan*|wlp*|wlx*) [ -z "$IFACE_WLAN" ] && IFACE_WLAN="$name" ;;
+    esac
+  done < <(ls /sys/class/net)
+fi
+IFACE_ETH="${IFACE_ETH:-eth0}"
+IFACE_WLAN="${IFACE_WLAN:-wlan0}"
+
+# Secondary Wi-Fi for cable-ap (USB dongle like WNA1100) — override VPN_MODE_WLAN_AP
+IFACE_WLAN_AP="${VPN_MODE_WLAN_AP:-}"
+if [ -z "$IFACE_WLAN_AP" ]; then
+  for name in $(ls /sys/class/net); do
+    case "$name" in
+      "$IFACE_WLAN"|lo|tailscale*|docker*|veth*|br*|virbr*|eth*|en*|em*) ;;
+      wlan*|wlp*|wlx*) IFACE_WLAN_AP="$name"; break ;;
+    esac
+  done
+fi
+
+CONN_ETH="vpn-mode-eth-${OCTETO}"
+CONN_UPLINK="vpn-mode-uplink"
+CONN_AP="vpn-mode-ap"
+CONN_BR="vpn-mode-br-${OCTETO}"
+CONN_BR_ETH="vpn-mode-br-eth-${OCTETO}"
+CONN_BR_AP="vpn-mode-br-ap-${OCTETO}"
+BR_IFACE="br-nabla${OCTETO}"
+SSID="Nabla Net"
+AP_ENV="$REAL_HOME/.config/nabla-net-ap.env"
+DNSMASQ_CONF="/etc/dnsmasq.d/vpn-mode-${OCTETO}.conf"
+SYSCTL_CONF="/etc/sysctl.d/99-vpn-mode-forward.conf"
+NFT_TABLE="vpn_mode_${OCTETO}"
+NFT_FILE="/etc/nftables.d/vpn-mode-${OCTETO}.nft"
+STATE_FILE="$REAL_HOME/.config/vpn-mode.state"
+
+need_root() {
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Usage: sudo $0 $*" >&2
+    exit 1
+  fi
+}
+
+load_ap_pass() {
+  if [ ! -f "$AP_ENV" ]; then
+    echo "Missing $AP_ENV (Nabla Net AP password)." >&2
+    echo "Create it with: NABLA_NET_AP_PASSWORD=YOUR_SECRET_HERE" >&2
+    exit 1
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  . "$AP_ENV"
+  set +a
+  [ -n "${NABLA_NET_AP_PASSWORD:-}" ] || { echo "NABLA_NET_AP_PASSWORD empty"; exit 1; }
+}
+
+pkgs() {
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq dnsmasq nftables iw rfkill bridge-utils >/dev/null
+}
+
+write_state() {
+  mkdir -p "$(dirname "$STATE_FILE")"
+  echo "$1" > "$STATE_FILE"
+  chown "$OWNER:$OWNER" "$STATE_FILE" 2>/dev/null || true
+}
+
+cleanup_nft_dnsmasq() {
+  nft delete table ip "$NFT_TABLE" 2>/dev/null || true
+  rm -f "$NFT_FILE" "$DNSMASQ_CONF"
+  rm -f /etc/dnsmasq.d/eth-lan-10.100.*.conf /etc/nftables.d/eth-lan-10.100.*.nft 2>/dev/null || true
+}
+
+detect_out_if() {
+  ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}'
+}
+
+setup_forward_nat() {
+  local out_if="$1"
+  cat > "$SYSCTL_CONF" <<EOF
+net.ipv4.ip_forward=1
+EOF
+  sysctl -p "$SYSCTL_CONF" >/dev/null
+  mkdir -p /etc/nftables.d
+  cat > "$NFT_FILE" <<EOF
+table ip $NFT_TABLE {
+  chain postrouting {
+    type nat hook postrouting priority 100;
+    oifname "$out_if" ip saddr $SUBNET masquerade
+  }
+  chain forward {
+    type filter hook forward priority 0; policy accept;
+    iifname "$IFACE_ETH" oifname "$out_if" accept
+    iifname "$out_if" oifname "$IFACE_ETH" ct state related,established accept
+    iifname "$IFACE_WLAN" oifname "$out_if" accept
+    iifname "$out_if" oifname "$IFACE_WLAN" ct state related,established accept
+  }
+}
+EOF
+  if [ -f /etc/nftables.conf ] && ! grep -q 'include "/etc/nftables.d/' /etc/nftables.conf 2>/dev/null; then
+    echo 'include "/etc/nftables.d/*.nft"' >> /etc/nftables.conf || true
+  fi
+  nft delete table ip "$NFT_TABLE" 2>/dev/null || true
+  nft -f "$NFT_FILE"
+  systemctl enable --now nftables 2>/dev/null || true
+}
+
+
+# Install dnsmasq systemd drop-in for boot race resilience:
+#   bind-dynamic handles interfaces appearing late
+#   Restart=on-failure keeps it alive if bind races at boot
+#
+# This drop-in (/etc/systemd/system/dnsmasq.service.d/nabla-vpn-mode.conf) is
+# REQUIRED for reliable DHCP on gateway Pis where eth0 often shows NO-CARRIER
+# until a client Pi is plugged in.
+ensure_dnsmasq() {
+  mkdir -p /etc/systemd/system/dnsmasq.service.d
+  cat > /etc/systemd/system/dnsmasq.service.d/nabla-vpn-mode.conf <<'UNIT'
+[Unit]
+# Wait for real NICs; still retry if bind races
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Restart=on-failure
+RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=20
+UNIT
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable dnsmasq >/dev/null 2>&1 || true
+  # restart with short retries if iface appears late
+  local i=0
+  until systemctl restart dnsmasq; do
+    i=$((i+1))
+    [ "$i" -ge 8 ] && { echo "ERROR: dnsmasq failed to start (DHCP dead)" >&2; return 1; }
+    sleep 2
+  done
+  systemctl is-active --quiet dnsmasq || { echo "ERROR: dnsmasq inactive after restart" >&2; return 1; }
+}
+
+setup_dnsmasq_eth() {
+  mkdir -p /etc/dnsmasq.d
+  cat > "$DNSMASQ_CONF" <<EOF
+interface=$IFACE_ETH
+bind-dynamic
+dhcp-range=$DHCP_RANGE
+dhcp-option=option:router,$GW_IP
+dhcp-option=option:dns-server,1.1.1.1,8.8.8.8
+domain-needed
+bogus-priv
+EOF
+  ensure_dnsmasq
+}
+
+advertise_ts() {
+  tailscale set --advertise-routes="$SUBNET" --accept-routes 2>/dev/null || \
+    tailscale up --advertise-routes="$SUBNET" --accept-routes 2>/dev/null || true
+  echo "Tailscale: advertising $SUBNET (approve in admin if first time)"
+}
+
+cmd_status() {
+  echo "host=$HOST octeto=$OCTETO subnet=$SUBNET"
+  echo "eth=$IFACE_ETH wlan=$IFACE_WLAN wlan_ap=${IFACE_WLAN_AP:-none} br=$BR_IFACE home=$REAL_HOME"
+  echo "state=$(cat "$STATE_FILE" 2>/dev/null || echo none)"
+  ip -br link show "$IFACE_ETH" 2>/dev/null || true
+  ip -br link show "$IFACE_WLAN" 2>/dev/null || true
+  [ -n "${IFACE_WLAN_AP:-}" ] && ip -br link show "$IFACE_WLAN_AP" 2>/dev/null || true
+  ip -br link show "$BR_IFACE" 2>/dev/null || true
+  ip -4 -br addr show "$IFACE_ETH" 2>/dev/null || true
+  ip -4 -br addr show "$IFACE_WLAN" 2>/dev/null || true
+  [ -n "${IFACE_WLAN_AP:-}" ] && ip -4 -br addr show "$IFACE_WLAN_AP" 2>/dev/null || true
+  ip -4 -br addr show "$BR_IFACE" 2>/dev/null || true
+  nmcli -t -f NAME,DEVICE,TYPE,STATE con show --active 2>/dev/null | head -20 || true
+  sysctl -n net.ipv4.ip_forward 2>/dev/null || true
+  systemctl is-active dnsmasq 2>/dev/null || true
+  tailscale debug prefs 2>/dev/null | grep -i AdvertiseRoutes || true
+}
+
+bring_down_mode_conns() {
+  for c in "$CONN_ETH" "$CONN_AP" "$CONN_UPLINK" "$CONN_BR" "$CONN_BR_ETH" "$CONN_BR_AP" \
+           eth-lan-10.100.1 eth-lan-10.100.2 nabla-net-ap; do
+    nmcli con down "$c" 2>/dev/null || true
+    nmcli con delete "$c" 2>/dev/null || true
+  done
+}
+
+cmd_cable() {
+  need_root "$@"
+  pkgs
+  echo "==> vpn-mode cable ($SUBNET) eth=$IFACE_ETH"
+  nmcli con down "$CONN_AP" 2>/dev/null || true
+  nmcli con delete "$CONN_AP" 2>/dev/null || true
+  nmcli con down "$CONN_UPLINK" 2>/dev/null || true
+  nmcli con delete "$CONN_UPLINK" 2>/dev/null || true
+  cleanup_nft_dnsmasq
+
+  nmcli con delete "$CONN_ETH" 2>/dev/null || true
+  nmcli con add type ethernet ifname "$IFACE_ETH" con-name "$CONN_ETH" \
+    ipv4.method manual ipv4.addresses "$ADDR" \
+    ipv4.never-default yes ipv6.method ignore connection.autoconnect yes
+  nmcli con up "$CONN_ETH" || true
+
+  local out; out="$(detect_out_if)"; out="${out:-$IFACE_WLAN}"
+  setup_forward_nat "$out"
+  setup_dnsmasq_eth
+  advertise_ts
+  write_state cable
+  echo "OK cable: $IFACE_ETH=$ADDR DHCP $DHCP_RANGE NAT→$out"
+  cmd_status
+}
+
+cmd_ap() {
+  need_root "$@"
+  pkgs
+  load_ap_pass
+  echo "==> vpn-mode ap SSID='$SSID' ($SUBNET) wlan=$IFACE_WLAN"
+  nmcli con down "$CONN_ETH" 2>/dev/null || true
+  nmcli con delete "$CONN_ETH" 2>/dev/null || true
+  cleanup_nft_dnsmasq
+
+  nmcli device disconnect "$IFACE_WLAN" 2>/dev/null || true
+
+  nmcli con delete "$CONN_UPLINK" 2>/dev/null || true
+  nmcli con add type ethernet ifname "$IFACE_ETH" con-name "$CONN_UPLINK" \
+    ipv4.method auto ipv6.method ignore connection.autoconnect yes
+  nmcli con up "$CONN_UPLINK" || echo "warning: eth without DHCP yet"
+
+  nmcli con delete "$CONN_AP" 2>/dev/null || true
+  nmcli con add type wifi ifname "$IFACE_WLAN" con-name "$CONN_AP" ssid "$SSID" \
+    ipv4.method shared ipv4.addresses "$ADDR" ipv6.method ignore connection.autoconnect yes
+  nmcli con modify "$CONN_AP" 802-11-wireless.mode ap 802-11-wireless.band bg
+  nmcli con modify "$CONN_AP" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$NABLA_NET_AP_PASSWORD"
+  nmcli con up "$CONN_AP"
+
+  cat > "$SYSCTL_CONF" <<EOF
+net.ipv4.ip_forward=1
+EOF
+  sysctl -p "$SYSCTL_CONF" >/dev/null
+  advertise_ts
+  write_state ap
+  echo "OK ap: '$SSID' $ADDR via $IFACE_ETH"
+  cmd_status
+}
+
+
+setup_dnsmasq_iface() {
+  local iface="$1"
+  mkdir -p /etc/dnsmasq.d
+  cat > "$DNSMASQ_CONF" <<EOF
+interface=$iface
+bind-dynamic
+dhcp-range=$DHCP_RANGE
+dhcp-option=option:router,$GW_IP
+dhcp-option=option:dns-server,1.1.1.1,8.8.8.8
+domain-needed
+bogus-priv
+EOF
+  ensure_dnsmasq
+}
+
+setup_forward_nat_lan() {
+  local lan_if="$1"
+  local out_if="$2"
+  cat > "$SYSCTL_CONF" <<EOF
+net.ipv4.ip_forward=1
+EOF
+  sysctl -p "$SYSCTL_CONF" >/dev/null
+  mkdir -p /etc/nftables.d
+  cat > "$NFT_FILE" <<EOF
+table ip $NFT_TABLE {
+  chain postrouting {
+    type nat hook postrouting priority 100;
+    oifname "$out_if" ip saddr $SUBNET masquerade
+  }
+  chain forward {
+    type filter hook forward priority 0; policy accept;
+    iifname "$lan_if" oifname "$out_if" accept
+    iifname "$out_if" oifname "$lan_if" ct state related,established accept
+  }
+}
+EOF
+  if [ -f /etc/nftables.conf ] && ! grep -q 'include "/etc/nftables.d/' /etc/nftables.conf 2>/dev/null; then
+    echo 'include "/etc/nftables.d/*.nft"' >> /etc/nftables.conf || true
+  fi
+  nft delete table ip "$NFT_TABLE" 2>/dev/null || true
+  nft -f "$NFT_FILE"
+  systemctl enable --now nftables 2>/dev/null || true
+}
+
+cmd_cable_ap() {
+  need_root "$@"
+  pkgs
+  load_ap_pass
+  if [ -z "${IFACE_WLAN_AP:-}" ]; then
+    echo "cable-ap requires a 2nd Wi-Fi (e.g. wlan1 / WNA1100). None found." >&2
+    echo "wlan0=$IFACE_WLAN  detected: $(ls /sys/class/net | tr '\n' ' ')" >&2
+    exit 1
+  fi
+  echo "==> vpn-mode cable-ap ($SUBNET) eth=$IFACE_ETH + AP '$SSID' on $IFACE_WLAN_AP (br=$BR_IFACE)"
+  bring_down_mode_conns
+  cleanup_nft_dnsmasq
+
+  # Client uplink stays on IFACE_WLAN (wlan0); just disconnect AP iface
+  nmcli device disconnect "$IFACE_WLAN_AP" 2>/dev/null || true
+  nmcli device set "$IFACE_ETH" managed yes 2>/dev/null || true
+
+  nmcli con add type bridge ifname "$BR_IFACE" con-name "$CONN_BR" \
+    ipv4.method manual ipv4.addresses "$ADDR" \
+    ipv4.never-default yes ipv6.method ignore \
+    bridge.stp false connection.autoconnect yes
+  nmcli con add type bridge-slave ifname "$IFACE_ETH" master "$CONN_BR" con-name "$CONN_BR_ETH" \
+    connection.autoconnect yes
+
+  nmcli con add type wifi ifname "$IFACE_WLAN_AP" con-name "$CONN_BR_AP" ssid "$SSID" \
+    connection.master "$CONN_BR" connection.slave-type bridge connection.autoconnect yes
+  nmcli con modify "$CONN_BR_AP" 802-11-wireless.mode ap 802-11-wireless.band bg
+  nmcli con modify "$CONN_BR_AP" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$NABLA_NET_AP_PASSWORD"
+
+  nmcli con up "$CONN_BR" || true
+  nmcli con up "$CONN_BR_ETH" || true
+  nmcli con up "$CONN_BR_AP"
+
+  local out; out="$(detect_out_if)"; out="${out:-$IFACE_WLAN}"
+  setup_forward_nat_lan "$BR_IFACE" "$out"
+  setup_dnsmasq_iface "$BR_IFACE"
+  advertise_ts
+  write_state cable-ap
+  echo "OK cable-ap: $BR_IFACE=$ADDR  cable=$IFACE_ETH  AP=$IFACE_WLAN_AP '$SSID'  NAT→$out"
+  cmd_status
+}
+
+cmd_off() {
+  need_root "$@"
+  bring_down_mode_conns
+  cleanup_nft_dnsmasq
+  rm -f "$SYSCTL_CONF"
+  sysctl -w net.ipv4.ip_forward=0 >/dev/null 2>&1 || true
+  systemctl restart dnsmasq 2>/dev/null || true
+  tailscale set --advertise-routes= 2>/dev/null || true
+  nmcli device connect "$IFACE_WLAN" 2>/dev/null || true
+  write_state off
+  echo "Disabled."
+  cmd_status
+}
+
+case "${1:-}" in
+  cable|enable) cmd_cable "$@" ;;
+  ap)           cmd_ap "$@" ;;
+  cable-ap)     cmd_cable_ap "$@" ;;
+  off|disable)  cmd_off "$@" ;;
+  status)       cmd_status ;;
+  *)
+    echo "Usage: sudo $0 cable|ap|cable-ap|off|status"
+    echo "  cable    — eth0 is gateway (10.100.N.1/24), WiFi uplink, DHCP for clients"
+    echo "  ap       — WiFi AP mode (Nabla Net SSID), eth uplink"
+    echo "  cable-ap — eth LAN + AP on 2nd Wi-Fi (same subnet bridged)"
+    echo "  off      — disable LAN gateway, restore normal networking"
+    echo "  status   — show current state"
+    echo ""
+    echo "  host=$HOST → $SUBNET  eth=$IFACE_ETH  wlan=$IFACE_WLAN  wlan_ap=${IFACE_WLAN_AP:-none}"
+    exit 1
+    ;;
+esac

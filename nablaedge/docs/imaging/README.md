@@ -160,6 +160,21 @@ Depending on the method:
 | Local .deb (fallback) | `/boot/nabla-edge_*.deb` |
 | APT (target) | Downloaded from `https://coco.nabla.net/apt/` |
 
+### vpn-mode Installation
+
+The `nabla-edge` package installs `vpn-mode` to `/usr/local/bin/`. After first-boot:
+
+```bash
+# Enable cable mode (gateway with WiFi uplink)
+sudo vpn-mode cable
+
+# Or via nabla-config menu
+sudo nabla-config network
+```
+
+For gateway Pis that will serve DHCP to client Pis, enable cable mode. See
+[../network-modes/](../network-modes/) for details on modes and configuration.
+
 ### Configuration Files
 
 Placed in `/boot/nabla/`:

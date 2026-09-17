@@ -38,7 +38,7 @@ That's it. The package installs:
 | `/opt/nabla-edge/` | Core tools, scripts, and configuration |
 | `nabla-config` | Interactive whiptail menu for system setup |
 | `nabla-net` | Network mode management (cable, ap, cable-ap, off) |
-| `vpn-mode` | Mesh overlay network integration |
+| `vpn-mode` | Private LAN gateway + Tailscale (cable/ap/cable-ap/off) |
 | `nabla-image` | SD/USB imaging tool for new nodes |
 | Systemd units | `nabla-net.service`, `nabla-oled.service`, etc. |
 

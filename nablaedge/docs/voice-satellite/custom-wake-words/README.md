@@ -17,9 +17,9 @@ Custom wake words let you trigger voice assistants with personalized phrases lik
 
 ## Available Custom Wake Words
 
-| Wake Word | Status | Model Path (Coco) |
-|-----------|--------|-------------------|
-| **Oye Veronica** | Ready (first-pass) | `\\coco\nabla.net\packages\wakewords\oye_veronica\` |
+| Wake Word | Status | Cutoff | Model Path (Coco) | Notes |
+|-----------|--------|--------|-------------------|-------|
+| **Oye Veronica** | Ready (v2 overnight) | 0.88 | `\\coco\nabla.net\packages\wakewords\oye_veronica\` | Trained on GPU host; packaged on Coco |
 
 Future wake words follow the same layout: `packages/wakewords/<id>/`.
 
@@ -27,12 +27,33 @@ Future wake words follow the same layout: `packages/wakewords/<id>/`.
 
 ## Package Contents
 
-Each wake word package contains:
+Each wake word package contains the active model plus any superseded versions:
 
 ```
 packages/wakewords/oye_veronica/
-├── oye_veronica.tflite    # TensorFlow Lite model
-└── oye_veronica.json      # Model metadata (threshold, labels)
+├── oye_veronica.tflite        # TFLite model (v2, 86360 bytes, exported 2026-09-14)
+├── oye_veronica.json          # Model metadata
+├── oye_veronica_mww.tflite    # First-pass model (superseded)
+└── oye_veronica_mww.json      # First-pass metadata (superseded)
+```
+
+**oye_veronica.json** (v2):
+```json
+{
+  "type": "micro",
+  "wake_word": "Oye Veronica",
+  "version": 2,
+  "author": "txema",
+  "trained_languages": ["es"],
+  "model": "oye_veronica.tflite",
+  "micro": {
+    "probability_cutoff": 0.88,
+    "sliding_window_size": 10,
+    "feature_step_size": 10,
+    "tensor_arena_size": 20000
+  },
+  "minimum_esphome_version": "2024.2.0"
+}
 ```
 
 ---
@@ -223,17 +244,12 @@ nvidia-smi
 
 ### Model too sensitive / not sensitive enough
 
-Adjust the threshold in the `.json` metadata file:
+Adjust `micro.probability_cutoff` in the `.json` metadata file. Oye Veronica v2 uses 0.88:
 
-```json
-{
-  "wake_word": "oye_veronica",
-  "threshold": 0.5
-}
-```
+- Lower cutoff (0.5–0.7) = more sensitive, more false positives
+- Higher cutoff (0.85–0.95) = less sensitive, fewer false positives
 
-- Lower threshold (0.3) = more sensitive, more false positives
-- Higher threshold (0.7) = less sensitive, fewer false positives
+The v2 overnight training with RTX 4090 GPU yielded a higher-confidence model, allowing a cutoff of 0.88 with good recall.
 
 ---
 

@@ -1,6 +1,8 @@
 # Secrets and credentials
 .env
 .env.*
+wifi.env
+*wifi*.env
 *.pem
 *.key
 *.crt

@@ -9,9 +9,11 @@ How to create bootable SD/USB media with NablaEdge first-boot injection.
 `nabla-image` (called from `nabla-config` → Media) prepares Raspberry Pi boot media:
 
 1. Fetches Raspberry Pi OS image
-2. Writes to SD card or USB drive
+2. **Bakes fleet defaults**: ES keyboard, Wi-Fi profiles, SSH enabled
 3. Injects first-boot scripts and edge packages
 4. Optionally enables OTP USB boot for Pi 3B
+
+**Key design**: First boot only prompts for **user + password**. No Wi-Fi or keyboard questions.
 
 ---
 
@@ -19,13 +21,82 @@ How to create bootable SD/USB media with NablaEdge first-boot injection.
 
 ```bash
 # List available drives
-nabla-image --list
+nabla-image list
 
 # Create image on /dev/sdX (example - use actual device)
-sudo nabla-image --target /dev/sdX --site demo
+sudo nabla-image write-usb /dev/sdX --hostname edge01 --octeto 3
 ```
 
 **Warning**: This erases all data on the target drive.
+
+---
+
+## What Gets Baked at Image Write Time
+
+| Setting | Value | Source |
+|---------|-------|--------|
+| Keyboard layout | `es` (Spanish) | Always baked |
+| Wi-Fi country | `ES` | Always baked |
+| Wi-Fi networks | Fleet SSIDs with priority | From `~/.config/nabla/wifi.env` |
+| SSH | Enabled | Always |
+| Hostname | Custom | `--hostname` flag |
+| Octeto (subnet) | Custom | `--octeto` flag |
+
+**What is NOT baked**: Username and password. The Pi uses Raspberry Pi OS's standard first-login user creation.
+
+---
+
+## Wi-Fi Credentials Setup (Flasher Machine)
+
+Create `~/.config/nabla/wifi.env` on the machine running `nabla-image`:
+
+```bash
+mkdir -p ~/.config/nabla
+cat > ~/.config/nabla/wifi.env << 'EOF'
+# Nabla Wi-Fi Credentials (NEVER commit to git!)
+# Priority: higher number = tried first
+
+# Network 1: primary fleet (priority 40)
+wifi_ssid_net="CHANGE_ME"
+wifi_password_net="CHANGE_ME"
+
+# Network 2: mobile hotspot (priority 30)
+wifi_ssid_go="CHANGE_ME"
+wifi_password_go="CHANGE_ME"
+
+# Network 3: site-specific (priority 20)
+wifi_ssid_villa="CHANGE_ME"
+wifi_password_villa="CHANGE_ME"
+
+# Network 4: fallback (priority 10)
+wifi_ssid="CHANGE_ME"
+wifi_password="CHANGE_ME"
+EOF
+chmod 600 ~/.config/nabla/wifi.env
+```
+
+Alternative path: `~/.config/nabla-wifi.env`
+
+If the file is missing, `nabla-image` warns but continues — the Pi will need manual Wi-Fi setup via `nabla-config`.
+
+---
+
+## First Boot Behavior
+
+```mermaid
+flowchart TD
+    Boot[Pi boots] --> WiFi{Wi-Fi baked?}
+    WiFi -->|Yes| Connect[Auto-connects to fleet network]
+    WiFi -->|No| Manual[User adds Wi-Fi via nabla-config]
+    Connect --> User[Prompts for user + password]
+    Manual --> User
+    User --> Install[nabla-firstboot installs edge package]
+    Install --> Ready[Ready to use]
+```
+
+**Interactive prompts on first boot**: User + password ONLY
+
+**NOT prompted**: Wi-Fi, keyboard layout, locale (all pre-configured)
 
 ---
 
@@ -34,11 +105,15 @@ sudo nabla-image --target /dev/sdX --site demo
 ```mermaid
 flowchart TD
     Start[nabla-image] --> Fetch[Fetch Raspberry Pi OS]
-    Fetch --> Inject[Inject first-boot scripts]
+    Fetch --> Keyboard[Bake ES keyboard + locale]
+    Keyboard --> WifiEnv{wifi.env exists?}
+    WifiEnv -->|Yes| InjectWifi[Inject Wi-Fi profiles]
+    WifiEnv -->|No| WarnWifi[Warn: no Wi-Fi baked]
+    InjectWifi --> Inject[Inject first-boot scripts]
+    WarnWifi --> Inject
     Inject --> Packages[Add edge packages]
     Packages --> Write[Write to SD/USB]
-    Write --> Verify[Verify write]
-    Verify --> Done[Ready to boot]
+    Write --> Done[Ready to boot]
     
     OTP{OTP needed?}
     Done --> OTP
@@ -239,17 +314,42 @@ This is triggered via udev rules calling `nabla-config --usb-dialog`.
 ## Command Reference
 
 ```
-nabla-image [OPTIONS]
+nabla-image [COMMAND] [OPTIONS]
 
-OPTIONS:
-  --help, -h              Show help
-  --list                  List available target drives
-  --target DEVICE         Target device (e.g., /dev/sdb)
-  --site NAME             Site identifier (default: demo)
-  --image URL             Custom image URL (default: latest Pi OS)
-  --enable-otp            Enable USB boot OTP on Pi 3B
-  --dry-run               Show what would be done
-  --verify                Verify write after completion
+COMMANDS:
+  list                    List available block devices
+  fetch-base [--lite|--desktop]
+                          Download and cache Pi OS image
+  write-usb DEVICE [OPTIONS]
+                          Write Nabla Pi OS to device
+  write-sd DEVICE         Alias for write-usb
+  write-otp DEVICE        Write OTP enabler for Pi 3B USB boot
+
+OPTIONS for write-usb/write-sd:
+  --lite                  Use Pi OS Lite (default)
+  --desktop               Use Pi OS Desktop
+  --hostname NAME         Set Pi hostname
+  --octeto N              Set subnet octeto (10.100.N.0/24)
+
+ENVIRONMENT:
+  NABLA_WIFI_ENV          Override Wi-Fi credentials file path
+  NABLA_EDGE_TAR          Path to nabla-edge.tar.gz
+```
+
+### Examples
+
+```bash
+# Basic write with hostname
+sudo nabla-image write-usb /dev/sdb --hostname edge01
+
+# Desktop image with octeto
+sudo nabla-image write-usb /dev/sdb --desktop --hostname gateway --octeto 3
+
+# Cache the base image first
+sudo nabla-image fetch-base --desktop
+
+# OTP enabler for Pi 3B
+sudo nabla-image write-otp /dev/sdb
 ```
 
 ---
@@ -277,9 +377,8 @@ nabla-image --target /dev/sdX --image /path/to/custom.img.xz
 ## Safety Features
 
 1. **Device validation** — Refuses to write to system drives
-2. **Confirmation prompt** — Shows target device info before write
-3. **Dry-run mode** — Preview without writing
-4. **Verification** — Optional post-write verification
+2. **Confirmation prompt** — Shows target device info before write (via nabla-config)
+3. **Protected devices** — Won't overwrite usbdata volumes
 
 ---
 
@@ -296,33 +395,65 @@ sudo umount /dev/sdX*
 
 ```bash
 # Run with sudo
-sudo nabla-image --target /dev/sdX
+sudo nabla-image write-usb /dev/sdX
 ```
 
-### First-boot doesn't run
+### Wi-Fi not working on first boot
 
-Check `/boot/firstboot.d/` exists and scripts are executable:
+1. Check if `wifi.env` existed on flasher machine:
+   ```bash
+   ls -la ~/.config/nabla/wifi.env
+   ```
+2. If missing, the image boots without Wi-Fi — add manually:
+   ```bash
+   sudo nabla-config  # → Network
+   ```
+
+### First-boot service doesn't run
+
+Check the flag file and service:
 
 ```bash
-ls -la /boot/firstboot.d/
+ls -la /boot/firmware/nabla-firstboot.flag
+systemctl status nabla-firstboot.service
+journalctl -u nabla-firstboot.service
 ```
 
-### First-boot APT install fails
+### First-boot package install fails
 
-If network isn't available at first-boot, the APT method will fail and fall back to local .deb or tarball. To debug:
+Check logs:
 
 ```bash
-# Check firstboot logs
-journalctl -u firstboot
-cat /var/log/firstboot.log
+cat /var/log/nabla-firstboot.log
 ```
+
+If network wasn't available, APT failed and tarball install was attempted.
+
+---
+
+## Implementation Status
+
+| Task ID | Description | Status |
+|---------|-------------|--------|
+| IMG-06 | ES keyboard baked at image write | ✅ Done |
+| IMG-07 | Wi-Fi profiles from host env file | ✅ Done |
+| IMG-08 | First boot prompts user+password only | ✅ Done |
+
+---
+
+## Security Notes
+
+- **NEVER** commit real Wi-Fi passwords to git
+- `wifi.env` lives only on the flasher machine (`~/.config/nabla/`)
+- Passwords are injected into the image at write time, not stored in repo
+- The `.gitignore` blocks `*.env`, `wifi.env`, and similar patterns
 
 ---
 
 ## How to Change This
 
-1. Edit first-boot scripts in the packaging repo
-2. Update package list in nabla-image source
+1. Edit first-boot scripts in `nablaedge/scripts/image/firstboot/`
+2. Edit `nabla-image` in `nablaedge/scripts/`
 3. Test on real hardware before documenting
 4. Keep example values sanitized (no real hostnames/IPs)
 
@@ -333,3 +464,4 @@ cat /var/log/firstboot.log
 - [../packages-apt/](../packages-apt/) — APT repository and tarball install
 - [../pi-config-menu/](../pi-config-menu/) — Post-boot configuration
 - [../network-modes/](../network-modes/) — Network setup after boot
+- [`../../scripts/image/wifi.env.example`](../../scripts/image/wifi.env.example) — Wi-Fi template

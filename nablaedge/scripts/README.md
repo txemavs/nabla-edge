@@ -1,11 +1,32 @@
-# NablaEdge scripts (learning mirrors)
+# NablaEdge Scripts
 
-Sanitized copies of Edge node tools so you can read and edit them here.
+Edge node tools for configuration and imaging.
 
 | Script | Role |
 |--------|------|
-| [`nabla-config`](nabla-config) | Whiptail panel: network, imaging media, accessories (v0.7+) |
+| [`nabla-config`](nabla-config) | Whiptail panel: network, imaging media, accessories, voice |
+| [`nabla-image`](nabla-image) | Pi OS media writer with fleet defaults (ES keyboard, Wi-Fi injection) |
 
-Private site packages and installs still live on the private package share; this tree is the **readable** source for how the tools work.
+## Imaging Support Files
 
-See [`../docs/pi-config-menu/`](../docs/pi-config-menu/) for the narrative.
+```
+image/
+├── firstboot/
+│   ├── nabla-firstboot.sh      # First-boot setup script
+│   └── nabla-firstboot.service # Systemd unit
+├── otp-enabler/
+│   └── config.txt.append       # OTP bit for Pi 3B USB boot
+└── wifi.env.example            # Wi-Fi credentials template
+```
+
+## Wi-Fi Credentials (Flasher Machine)
+
+Before running `nabla-image`, create `~/.config/nabla/wifi.env` with your fleet Wi-Fi credentials. See [`image/wifi.env.example`](image/wifi.env.example) for the template.
+
+**Security**: Never commit real credentials. The example uses `CHANGE_ME` placeholders.
+
+## Related Documentation
+
+- [`../docs/imaging/`](../docs/imaging/) — Full imaging workflow
+- [`../docs/pi-config-menu/`](../docs/pi-config-menu/) — nabla-config reference
+- [`../docs/network-modes/`](../docs/network-modes/) — Network configuration

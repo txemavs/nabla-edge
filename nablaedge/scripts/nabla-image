@@ -1,0 +1,604 @@
+#!/bin/bash
+# nabla-image — Nabla Pi OS media writer with fleet first-boot defaults
+# Injects: ES keyboard/locale, Wi-Fi profiles (from host env), SSH, hostname/octeto
+# Does NOT bake a fixed username — first interactive prompt is user creation only
+set -euo pipefail
+
+VERSION="1.0.0"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/nabla-image"
+PKG_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Pi OS base image URLs (arm64 lite/desktop)
+PI_OS_BASE_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images"
+PI_OS_DESKTOP_URL="https://downloads.raspberrypi.com/raspios_arm64/images"
+
+# Wi-Fi credentials file path (host-local, not in repo)
+WIFI_ENV_PATH="${NABLA_WIFI_ENV:-${HOME}/.config/nabla/wifi.env}"
+WIFI_ENV_ALT="${HOME}/.config/nabla-wifi.env"
+
+# Edge package source
+NABLA_EDGE_TAR="${NABLA_EDGE_TAR:-}"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARNING: $*" >&2; }
+info() { echo "==> $*"; }
+
+need_root() {
+  if [ "$(id -u)" -ne 0 ]; then
+    die "Requires root: sudo nabla-image $*"
+  fi
+}
+
+ensure_cache() {
+  mkdir -p "$CACHE"
+}
+
+fetch_base() {
+  local kind="${1:-lite}"
+  local base_url img_url img_name img_path
+
+  ensure_cache
+
+  case "$kind" in
+    lite) base_url="$PI_OS_BASE_URL" ;;
+    desktop) base_url="$PI_OS_DESKTOP_URL" ;;
+    *) die "Unknown kind: $kind (use lite or desktop)" ;;
+  esac
+
+  info "Fetching latest Pi OS $kind index..."
+  local index_html latest_dir
+  index_html="$(curl -fsSL "$base_url/")"
+  latest_dir="$(echo "$index_html" | grep -oP 'href="\Kraspios[^"]+/' | sort -V | tail -1)"
+  [ -n "$latest_dir" ] || die "Cannot find latest image directory"
+
+  local dir_html
+  dir_html="$(curl -fsSL "${base_url}/${latest_dir}")"
+  img_name="$(echo "$dir_html" | grep -oP 'href="\K[^"]+\.img\.xz' | head -1)"
+  [ -n "$img_name" ] || die "Cannot find .img.xz in ${base_url}/${latest_dir}"
+
+  img_url="${base_url}/${latest_dir}${img_name}"
+  img_path="$CACHE/$img_name"
+  local img_uncompressed="${img_path%.xz}"
+
+  if [ -f "$img_uncompressed" ]; then
+    info "Using cached: $img_uncompressed"
+    echo "$img_uncompressed"
+    return 0
+  fi
+
+  if [ ! -f "$img_path" ]; then
+    info "Downloading $img_url ..."
+    curl -fL -o "$img_path.part" "$img_url"
+    mv "$img_path.part" "$img_path"
+  fi
+
+  info "Decompressing $img_name ..."
+  xz -dk "$img_path"
+  echo "$img_uncompressed"
+}
+
+find_edge_tar() {
+  if [ -n "$NABLA_EDGE_TAR" ] && [ -f "$NABLA_EDGE_TAR" ]; then
+    echo "$NABLA_EDGE_TAR"
+    return 0
+  fi
+  local candidates=(
+    "$PKG_DIR/../dist/nabla-edge.tar.gz"
+    "/opt/nabla-edge/nabla-edge.tar.gz"
+    "$HOME/nabla-edge.tar.gz"
+  )
+  for c in "${candidates[@]}"; do
+    if [ -f "$c" ]; then
+      echo "$c"
+      return 0
+    fi
+  done
+  die "Cannot find nabla-edge.tar.gz — set NABLA_EDGE_TAR= or place in dist/"
+}
+
+load_wifi_env() {
+  local wifi_file=""
+  if [ -f "$WIFI_ENV_PATH" ]; then
+    wifi_file="$WIFI_ENV_PATH"
+  elif [ -f "$WIFI_ENV_ALT" ]; then
+    wifi_file="$WIFI_ENV_ALT"
+  fi
+
+  if [ -z "$wifi_file" ]; then
+    warn "Wi-Fi credentials file not found at:"
+    warn "  $WIFI_ENV_PATH"
+    warn "  $WIFI_ENV_ALT"
+    warn "Skipping Wi-Fi injection. Pi will need manual Wi-Fi setup."
+    return 1
+  fi
+
+  info "Loading Wi-Fi credentials from: $wifi_file"
+  # shellcheck disable=SC1090
+  . "$wifi_file"
+  return 0
+}
+
+inject_keyboard_locale() {
+  local bootmnt="$1"
+  local rootmnt="$2"
+
+  info "Injecting ES keyboard layout and locale..."
+
+  # Raspberry Pi OS uses /boot/firmware/cmdline.txt and custom.toml for firstrun
+  # But for pre-firstrun config, we write directly to rootfs
+
+  # Set keyboard layout via /etc/default/keyboard
+  cat > "$rootmnt/etc/default/keyboard" <<'EOF'
+XKBMODEL="pc105"
+XKBLAYOUT="es"
+XKBVARIANT=""
+XKBOPTIONS=""
+BACKSPACE="guess"
+EOF
+
+  # Set Wi-Fi country / regulatory domain
+  if [ -d "$rootmnt/etc/default" ]; then
+    echo 'REGDOMAIN=ES' > "$rootmnt/etc/default/crda"
+  fi
+
+  # For NetworkManager-based systems (Pi OS Bookworm+)
+  if [ -d "$rootmnt/etc/NetworkManager/conf.d" ]; then
+    cat > "$rootmnt/etc/NetworkManager/conf.d/99-wifi-country.conf" <<'EOF'
+[device]
+wifi.scan-rand-mac-address=no
+
+[connection]
+wifi.cloned-mac-address=preserve
+EOF
+  fi
+
+  # wpa_supplicant country code (legacy, but still read)
+  mkdir -p "$rootmnt/etc/wpa_supplicant"
+  if [ ! -f "$rootmnt/etc/wpa_supplicant/wpa_supplicant.conf" ]; then
+    cat > "$rootmnt/etc/wpa_supplicant/wpa_supplicant.conf" <<'EOF'
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+country=ES
+EOF
+  else
+    # Ensure country is set
+    if ! grep -q '^country=' "$rootmnt/etc/wpa_supplicant/wpa_supplicant.conf"; then
+      sed -i '1a country=ES' "$rootmnt/etc/wpa_supplicant/wpa_supplicant.conf"
+    fi
+  fi
+}
+
+inject_wifi_profiles() {
+  local rootmnt="$1"
+
+  # Check if Wi-Fi env vars are loaded
+  if [ -z "${wifi_ssid_net:-}" ] && [ -z "${wifi_ssid:-}" ]; then
+    warn "No Wi-Fi credentials loaded — skipping Wi-Fi profile injection"
+    return 0
+  fi
+
+  info "Injecting Wi-Fi profiles..."
+
+  # Raspberry Pi OS Bookworm uses NetworkManager
+  local nm_conn_dir="$rootmnt/etc/NetworkManager/system-connections"
+
+  if [ -d "$rootmnt/etc/NetworkManager" ]; then
+    mkdir -p "$nm_conn_dir"
+
+    # Priority order: net(40) > go(30) > villa(20) > nabla(10)
+    # Higher autoconnect-priority = tried first
+
+    # Network 1: Nabla Net (priority 40)
+    if [ -n "${wifi_ssid_net:-}" ] && [ -n "${wifi_password_net:-}" ]; then
+      cat > "$nm_conn_dir/nabla-net.nmconnection" <<EOF
+[connection]
+id=Nabla Net
+uuid=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+type=wifi
+autoconnect=true
+autoconnect-priority=40
+
+[wifi]
+mode=infrastructure
+ssid=${wifi_ssid_net}
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=${wifi_password_net}
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+EOF
+      chmod 600 "$nm_conn_dir/nabla-net.nmconnection"
+    fi
+
+    # Network 2: Nabla Go (priority 30)
+    if [ -n "${wifi_ssid_go:-}" ] && [ -n "${wifi_password_go:-}" ]; then
+      cat > "$nm_conn_dir/nabla-go.nmconnection" <<EOF
+[connection]
+id=Nabla Go
+uuid=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+type=wifi
+autoconnect=true
+autoconnect-priority=30
+
+[wifi]
+mode=infrastructure
+ssid=${wifi_ssid_go}
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=${wifi_password_go}
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+EOF
+      chmod 600 "$nm_conn_dir/nabla-go.nmconnection"
+    fi
+
+    # Network 3: Villa (priority 20)
+    if [ -n "${wifi_ssid_villa:-}" ] && [ -n "${wifi_password_villa:-}" ]; then
+      cat > "$nm_conn_dir/nabla-villa.nmconnection" <<EOF
+[connection]
+id=Villa
+uuid=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+type=wifi
+autoconnect=true
+autoconnect-priority=20
+
+[wifi]
+mode=infrastructure
+ssid=${wifi_ssid_villa}
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=${wifi_password_villa}
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+EOF
+      chmod 600 "$nm_conn_dir/nabla-villa.nmconnection"
+    fi
+
+    # Network 4: Generic Nabla fallback (priority 10)
+    if [ -n "${wifi_ssid:-}" ] && [ -n "${wifi_password:-}" ]; then
+      cat > "$nm_conn_dir/nabla.nmconnection" <<EOF
+[connection]
+id=Nabla
+uuid=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+type=wifi
+autoconnect=true
+autoconnect-priority=10
+
+[wifi]
+mode=infrastructure
+ssid=${wifi_ssid}
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=${wifi_password}
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+EOF
+      chmod 600 "$nm_conn_dir/nabla.nmconnection"
+    fi
+
+    info "Wi-Fi profiles injected to NetworkManager"
+  else
+    # Fallback: wpa_supplicant style (older Pi OS)
+    local wpa_conf="$rootmnt/etc/wpa_supplicant/wpa_supplicant.conf"
+    mkdir -p "$rootmnt/etc/wpa_supplicant"
+
+    if [ ! -f "$wpa_conf" ]; then
+      cat > "$wpa_conf" <<'EOF'
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+country=ES
+EOF
+    fi
+
+    # Append networks with priority
+    {
+      if [ -n "${wifi_ssid_net:-}" ] && [ -n "${wifi_password_net:-}" ]; then
+        echo ""
+        echo "network={"
+        echo "    ssid=\"${wifi_ssid_net}\""
+        echo "    psk=\"${wifi_password_net}\""
+        echo "    priority=40"
+        echo "}"
+      fi
+      if [ -n "${wifi_ssid_go:-}" ] && [ -n "${wifi_password_go:-}" ]; then
+        echo ""
+        echo "network={"
+        echo "    ssid=\"${wifi_ssid_go}\""
+        echo "    psk=\"${wifi_password_go}\""
+        echo "    priority=30"
+        echo "}"
+      fi
+      if [ -n "${wifi_ssid_villa:-}" ] && [ -n "${wifi_password_villa:-}" ]; then
+        echo ""
+        echo "network={"
+        echo "    ssid=\"${wifi_ssid_villa}\""
+        echo "    psk=\"${wifi_password_villa}\""
+        echo "    priority=20"
+        echo "}"
+      fi
+      if [ -n "${wifi_ssid:-}" ] && [ -n "${wifi_password:-}" ]; then
+        echo ""
+        echo "network={"
+        echo "    ssid=\"${wifi_ssid}\""
+        echo "    psk=\"${wifi_password}\""
+        echo "    priority=10"
+        echo "}"
+      fi
+    } >> "$wpa_conf"
+
+    info "Wi-Fi profiles injected to wpa_supplicant.conf"
+  fi
+}
+
+inject_firstboot() {
+  local img="$1" hostname="${2:-}" octeto="${3:-}" edge_tar="$4"
+  local loop bootmnt rootmnt
+  info "Injecting first-boot Nabla to $img"
+
+  apt-get install -y -qq kpartx dosfstools rsync >/dev/null 2>&1 || true
+
+  loop="$(losetup -fP --show "$img")"
+  sleep 1
+
+  local p1 p2
+  p1="${loop}p1"
+  p2="${loop}p2"
+  [ -b "$p1" ] || p1="/dev/mapper/$(basename "$loop")p1"
+  [ -b "$p2" ] || p2="/dev/mapper/$(basename "$loop")p2"
+
+  if [ ! -b "${loop}p1" ]; then
+    kpartx -av "$loop" >/dev/null
+    p1="/dev/mapper/$(basename "$loop")p1"
+    p2="/dev/mapper/$(basename "$loop")p2"
+  else
+    p1="${loop}p1"
+    p2="${loop}p2"
+  fi
+
+  bootmnt=$(mktemp -d)
+  rootmnt=$(mktemp -d)
+  mount "$p1" "$bootmnt"
+  mount "$p2" "$rootmnt"
+
+  # --- Keyboard + locale (ES) ---
+  inject_keyboard_locale "$bootmnt" "$rootmnt"
+
+  # --- Wi-Fi profiles (from host env file, if available) ---
+  if load_wifi_env; then
+    inject_wifi_profiles "$rootmnt"
+  fi
+
+  # --- SSH enabled ---
+  touch "$bootmnt/ssh"
+
+  # --- First-boot scripts ---
+  install -d -m 755 "$rootmnt/usr/local/lib/nabla"
+  if [ -f "$PKG_DIR/image/firstboot/nabla-firstboot.sh" ]; then
+    install -m 755 "$PKG_DIR/image/firstboot/nabla-firstboot.sh" \
+      "$rootmnt/usr/local/lib/nabla/nabla-firstboot.sh"
+    install -m 644 "$PKG_DIR/image/firstboot/nabla-firstboot.service" \
+      "$rootmnt/etc/systemd/system/nabla-firstboot.service"
+  else
+    die "Missing firstboot scripts in $PKG_DIR/image/firstboot/"
+  fi
+
+  # Enable firstboot service
+  mkdir -p "$rootmnt/etc/systemd/system/multi-user.target.wants"
+  ln -sf /etc/systemd/system/nabla-firstboot.service \
+    "$rootmnt/etc/systemd/system/multi-user.target.wants/nabla-firstboot.service"
+
+  # --- First-boot flag with hostname/octeto ---
+  {
+    echo "# nabla firstboot config"
+    echo "# Keyboard/locale: ES (baked)"
+    echo "# Wi-Fi: from host env file (baked if available)"
+    echo "# SSH: enabled"
+    echo "# First interactive: user+password only"
+    [ -n "$hostname" ] && echo "hostname=$hostname"
+    [ -n "$octeto" ] && echo "octeto=$octeto"
+  } > "$bootmnt/nabla-firstboot.flag"
+
+  # --- Edge package tarball ---
+  cp -f "$edge_tar" "$bootmnt/nabla-edge.tar.gz"
+
+  # --- DO NOT create userconf.txt with a baked user ---
+  # First-boot will use Raspberry Pi OS's standard user creation flow
+  # which prompts for username + password on first login (or first GUI boot)
+
+  sync
+  umount "$bootmnt" "$rootmnt"
+  rmdir "$bootmnt" "$rootmnt"
+  kpartx -d "$loop" 2>/dev/null || true
+  losetup -d "$loop" 2>/dev/null || true
+  info "Injection complete"
+}
+
+write_device() {
+  local img="$1" dev="$2"
+  [ -b "$dev" ] || die "Not a block device: $dev"
+  lsblk "$dev"
+  info "Writing $img → $dev (destructive)"
+
+  if findmnt -n -S "$dev" >/dev/null 2>&1 || lsblk -n -o MOUNTPOINT "$dev" | grep -q '/'; then
+    die "$dev has mounted partitions — unmount first"
+  fi
+
+  dd if="$img" of="$dev" bs=8M status=progress conv=fsync
+  sync
+  info "Write complete"
+}
+
+prepare_otp_image() {
+  local img out loop bootmnt p1
+  img="$(fetch_base lite)"
+  out="$CACHE/nabla-otp-enabler.img"
+  info "Preparing OTP enabler → $out"
+  cp -f "$img" "$out"
+
+  loop="$(losetup -fP --show "$out")"
+  sleep 1
+  p1="${loop}p1"
+  [ -b "$p1" ] || { kpartx -av "$loop" >/dev/null; p1="/dev/mapper/$(basename "$loop")p1"; }
+
+  bootmnt=$(mktemp -d)
+  mount "$p1" "$bootmnt"
+
+  if [ -f "$bootmnt/config.txt" ] && ! grep -q program_usb_boot_mode "$bootmnt/config.txt"; then
+    if [ -f "$PKG_DIR/image/otp-enabler/config.txt.append" ]; then
+      cat "$PKG_DIR/image/otp-enabler/config.txt.append" >> "$bootmnt/config.txt"
+    else
+      echo "program_usb_boot_mode=1" >> "$bootmnt/config.txt"
+    fi
+  fi
+  echo "nabla-otp-enabler" > "$bootmnt/nabla-otp.txt"
+
+  sync
+  umount "$bootmnt"
+  rmdir "$bootmnt"
+  kpartx -d "$loop" 2>/dev/null || true
+  losetup -d "$loop" 2>/dev/null || true
+  echo "$out"
+}
+
+cmd_list() {
+  info "Listing block devices..."
+  lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL
+}
+
+cmd_write() {
+  need_root
+  local dev="${1:-}" kind=lite hostname="" octeto=""
+  shift || true
+  [ -n "$dev" ] || die "Specify device, e.g. /dev/sdb"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --lite) kind=lite ;;
+      --desktop) kind=desktop ;;
+      --hostname) hostname="$2"; shift ;;
+      --octeto) octeto="$2"; shift ;;
+      *) die "Unknown option: $1" ;;
+    esac
+    shift
+  done
+
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get install -y -qq wget xz-utils kpartx >/dev/null
+
+  local base edge work
+  base="$(fetch_base "$kind")"
+  edge="$(find_edge_tar)"
+  work="$CACHE/nabla-pi-os-${kind}-work.img"
+
+  info "Copying work image..."
+  cp -f "$base" "$work"
+  inject_firstboot "$work" "$hostname" "$octeto" "$edge"
+  write_device "$work" "$dev"
+
+  echo ""
+  info "Nabla Pi OS ($kind) written to $dev"
+  info "First boot will:"
+  info "  - Auto-connect to known Wi-Fi (if credentials were injected)"
+  info "  - Use ES keyboard layout"
+  info "  - Enable SSH"
+  info "  - Prompt for user + password creation ONLY"
+  info "  - Install nabla-edge package"
+  [ -n "$hostname" ] && info "  - Set hostname: $hostname"
+  [ -n "$octeto" ] && info "  - Configure octeto: $octeto"
+}
+
+cmd_write_otp() {
+  need_root
+  local dev="${1:-}"
+  [ -n "$dev" ] || die "Specify device"
+
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get install -y -qq wget xz-utils kpartx >/dev/null
+
+  local img
+  img="$(prepare_otp_image)"
+  write_device "$img" "$dev"
+  info "OTP enabler on $dev — boot the 3B with this media once"
+}
+
+usage() {
+  cat <<EOF
+nabla-image $VERSION — Nabla Pi OS media writer
+
+USAGE:
+  sudo nabla-image list
+  sudo nabla-image fetch-base [--lite|--desktop]
+  sudo nabla-image write-usb /dev/sdX [--lite|--desktop] [--hostname NAME] [--octeto N]
+  sudo nabla-image write-sd  /dev/sdX   # alias for write-usb
+  sudo nabla-image write-otp /dev/sdX
+
+WHAT GETS BAKED AT IMAGE WRITE TIME:
+  - Keyboard layout: ES (Spanish)
+  - Wi-Fi country: ES
+  - Wi-Fi profiles: from \$NABLA_WIFI_ENV or ~/.config/nabla/wifi.env
+  - SSH: enabled
+  - Hostname + octeto: from --hostname/--octeto flags
+
+WHAT FIRST BOOT ASKS:
+  - User + password ONLY (no Wi-Fi, no keyboard prompts)
+
+WI-FI CREDENTIALS:
+  Create ~/.config/nabla/wifi.env (or ~/.config/nabla-wifi.env) with:
+
+    # Network 1: priority 40
+    wifi_ssid_net="CHANGE_ME"
+    wifi_password_net="CHANGE_ME"
+
+    # Network 2: priority 30
+    wifi_ssid_go="CHANGE_ME"
+    wifi_password_go="CHANGE_ME"
+
+    # Network 3: priority 20
+    wifi_ssid_villa="CHANGE_ME"
+    wifi_password_villa="CHANGE_ME"
+
+    # Network 4: priority 10 (fallback)
+    wifi_ssid="CHANGE_ME"
+    wifi_password="CHANGE_ME"
+
+  If this file is missing, Wi-Fi injection is skipped with a warning.
+  The image still works — user adds Wi-Fi manually via nabla-config.
+
+ENVIRONMENT:
+  NABLA_WIFI_ENV    Override Wi-Fi credentials file path
+  NABLA_EDGE_TAR    Path to nabla-edge.tar.gz
+
+CACHE:
+  $CACHE
+
+EOF
+}
+
+case "${1:-}" in
+  list) cmd_list ;;
+  fetch-base) shift; fetch_base "${1:-lite}" ;;
+  write-usb|write-sd) shift; cmd_write "$@" ;;
+  write-otp) shift; cmd_write_otp "$@" ;;
+  -h|--help|help|"") usage ;;
+  *) die "Unknown command: $1" ;;
+esac

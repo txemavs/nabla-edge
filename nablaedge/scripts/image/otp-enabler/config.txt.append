@@ -1,0 +1,3 @@
+# Nabla OTP Enabler — permanently enable USB boot on Pi 3B
+# This line sets the OTP bit on first boot, then can be removed
+program_usb_boot_mode=1

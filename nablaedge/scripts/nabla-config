@@ -362,7 +362,7 @@ menu_accessories() {
         ROTARY=$(acc_toggle "$ROTARY")
         acc_save "$DISPLAY_OLED" "$ROTARY" "$DISPLAY_LARGE"
         if [ "$ROTARY" = "1" ]; then
-          msg "Accessories" "Rotary encoder: ON\nEC11: A/B + switch to GPIO (pull-ups). See AGENTS.md."
+          msg "Accessories" "Rotary encoder: ON\n\nEC11 wiring (BCM GPIO):\n  CLK (A) = GPIO17 (pin 11)\n  DT  (B) = GPIO27 (pin 13)\n  SW      = GPIO22 (pin 15)\n  GND     = any GND pin\n  3V3     = optional (pin 1)\n\nInternal pull-ups enabled in software."
         else
           msg "Accessories" "Rotary encoder: OFF"
         fi

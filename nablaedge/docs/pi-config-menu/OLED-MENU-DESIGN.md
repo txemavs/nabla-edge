@@ -583,25 +583,33 @@ A linter script could:
 
 | What | Owner | Notes |
 |------|-------|-------|
-| **Tiny chrome contract (rules)** | Spui | Defines visual behavior for all OLED platforms |
-| **Pi chrome implementation** | Edge | Python renderer implements the rules |
-| **ESP chrome implementation** | Spui | nabla-esp-ui implements the rules |
+| **Tiny chrome contract (full rules)** | Spui | Defines visual behavior for all OLED platforms |
+| **Pi chrome implementation (v1 subset)** | Edge | Python renderer implements reduced subset |
+| **ESP chrome implementation (full)** | Spui | nabla-esp-ui implements full contract |
 | `menu_tree.yaml` | Edge | Single source of truth for Pi menu structure |
 | Encoder GPIO (GPIO17/27/22) | Edge | BCM pinout, pull-ups, events |
 | Keyboard contract | Spui | `components/keyboard/` in nabla-esp-ui |
-| **Pi keyboard implementation** | Edge | Must align with Spui keyboard contract (no ad-hoc) |
+| **Pi keyboard implementation** | Edge | Must align with Spui contract if needed (no ad-hoc) |
 
-### Tiny OLED Chrome Contract (Rules)
+> **Pi v1 scope**: Navigate the menu. Not porting all nabla-esp-ui Settings (contrast modes, appearance, etc.).
 
-The Tiny contract defines how focus and input work across all OLED platforms:
+### Tiny OLED Chrome Contract (Pi v1 — Reduced Subset)
 
-| Rule | Normal Mode | Alto Contraste Mode |
-|------|-------------|---------------------|
-| **Focus indicator** | `▶` caret at `CARET_X` | Inverted bar (white-on-black row) |
-| **Non-focused items** | Plain text | Plain text |
-| **Scrolling** | Keep focus in visible region | Same |
+For Pi v1, the goal is **navigate the menu**, not port all nabla-esp-ui Settings. The Pi implements a reduced subset of the Tiny contract:
 
-> **Global setting**: Normal vs Alto contraste is a **system-wide** appearance setting (from Ajustes/Appearance), not per-screen. The renderer reads this setting and applies the appropriate focus style everywhere.
+| Rule | Pi v1 Implementation |
+|------|----------------------|
+| **Focus indicator** | `▶` caret at `CARET_X` (fixed style) |
+| **Non-focused items** | Plain text |
+| **Scrolling** | Keep focus in visible region |
+| **Nabla branding** | ∇ + "nabla.net" on Reloj screen |
+
+**Out of scope for Pi v1:**
+- Alto contraste / Normal mode toggle (ESP has this via Appearance/Ajustes)
+- Appearance settings menu
+- Other nabla-esp-ui Settings features
+
+> **Future**: If contrast modes are needed on Pi, align with ESP implementation. For now, fixed `▶` style is sufficient.
 
 ### Text Input Contract
 
@@ -638,7 +646,7 @@ menu_tree.yaml  ──┬──▶  nabla-config (bash/whiptail)
 
 No duplication of menu labels or hierarchy — one source, multiple renderers.
 
-### Interface Contract Summary
+### Interface Contract Summary (Pi v1)
 
 The Pi renderer implements this minimal interface:
 
@@ -650,15 +658,14 @@ def get_visible_items() -> list[str]:
 def get_focus_index() -> int:
     """Index of currently focused item (0-based within visible)."""
 
-# Chrome implementation (Edge, per Spui contract):
-# - Normal: ▶ at CARET_X for focused row
-# - Alto contraste: inverted bar for focused row
-# - Status bar with clock, icons
-# - Nabla branding on idle screen
-# - Text input: defer to keyboard contract (no ad-hoc)
+# Chrome implementation (Edge, per Spui contract — v1 subset):
+# - ▶ at CARET_X for focused row (fixed style, no contrast modes)
+# - Status bar with clock
+# - Nabla branding on Reloj screen (∇ + nabla.net)
+# - Text input: defer to keyboard contract if needed (no ad-hoc)
 ```
 
-This keeps the app logic (menu navigation, actions) separate from visual chrome, while ensuring Pi and ESP have consistent UX.
+This keeps the app logic (menu navigation, actions) separate from visual chrome. Pi v1 focuses on menu navigation; advanced features (contrast modes, appearance settings) can be added later if needed.
 
 ---
 

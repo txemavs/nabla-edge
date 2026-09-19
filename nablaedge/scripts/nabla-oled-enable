@@ -1,0 +1,362 @@
+#!/bin/bash
+# nabla-oled-enable — Enable OLED menu shell with optional rotary encoder
+#
+# Usage:
+#   sudo nabla-oled-enable [--with-rotary]
+#   sudo nabla-oled-enable --disable
+#
+# This script:
+#   1. Ensures I2C is enabled on the Pi
+#   2. Installs Python dependencies (luma.oled, PyYAML)
+#   3. Copies scripts and service files
+#   4. Enables and starts the nabla-oled-menu.service
+#   5. Updates accessories.conf profile
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVICE_NAME="nabla-oled-menu.service"
+OLED_SCRIPT="nabla-oled-menu.py"
+MENU_TREE="menu_tree.yaml"
+
+# Installation paths
+INSTALL_BIN="/usr/local/bin"
+INSTALL_SHARE="/usr/share/nabla-edge"
+INSTALL_SERVICE="/etc/systemd/system"
+ACC_CONF="/etc/nabla-net/accessories.conf"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log_info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+
+need_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        log_error "Root required: sudo nabla-oled-enable"
+        exit 1
+    fi
+}
+
+is_pi() {
+    [ -f /proc/device-tree/model ] && grep -qi "raspberry" /proc/device-tree/model 2>/dev/null
+}
+
+check_i2c() {
+    # Check if I2C is enabled
+    if ! ls /dev/i2c-* >/dev/null 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
+enable_i2c() {
+    log_info "Enabling I2C interface..."
+    
+    # Enable via raspi-config non-interactive
+    if command -v raspi-config >/dev/null 2>&1; then
+        raspi-config nonint do_i2c 0 2>/dev/null || true
+    fi
+    
+    # Ensure i2c-dev is loaded
+    if ! lsmod | grep -q i2c_dev; then
+        modprobe i2c-dev 2>/dev/null || true
+    fi
+    
+    # Add to modules if not present
+    if ! grep -q "^i2c-dev" /etc/modules 2>/dev/null; then
+        echo "i2c-dev" >> /etc/modules
+    fi
+    
+    # Enable in config.txt
+    local config="/boot/firmware/config.txt"
+    [ -f "$config" ] || config="/boot/config.txt"
+    if [ -f "$config" ]; then
+        if ! grep -q "^dtparam=i2c_arm=on" "$config"; then
+            echo "dtparam=i2c_arm=on" >> "$config"
+            log_warn "I2C enabled in config.txt — reboot may be required"
+        fi
+    fi
+}
+
+install_dependencies() {
+    log_info "Installing Python dependencies..."
+    
+    # Install system packages if needed
+    if ! dpkg -l python3-pip >/dev/null 2>&1; then
+        apt-get update -qq
+        apt-get install -y -qq python3-pip python3-pil i2c-tools
+    fi
+    
+    # Install Python packages
+    pip3 install --quiet --break-system-packages luma.oled PyYAML 2>/dev/null || \
+    pip3 install --quiet luma.oled PyYAML 2>/dev/null || {
+        log_warn "pip install failed, trying apt packages..."
+        apt-get install -y -qq python3-luma.oled python3-yaml 2>/dev/null || true
+    }
+}
+
+install_files() {
+    log_info "Installing OLED menu files..."
+    
+    # Create directories
+    mkdir -p "$INSTALL_BIN" "$INSTALL_SHARE"
+    
+    # Find source files
+    local src_script="$SCRIPT_DIR/$OLED_SCRIPT"
+    local src_tree="$SCRIPT_DIR/$MENU_TREE"
+    local src_service="$SCRIPT_DIR/systemd/$SERVICE_NAME"
+    
+    # Install script
+    if [ -f "$src_script" ]; then
+        install -m 755 "$src_script" "$INSTALL_BIN/"
+        log_info "Installed $OLED_SCRIPT → $INSTALL_BIN/"
+    else
+        log_error "Source script not found: $src_script"
+        exit 1
+    fi
+    
+    # Install menu tree
+    if [ -f "$src_tree" ]; then
+        install -m 644 "$src_tree" "$INSTALL_SHARE/"
+        log_info "Installed $MENU_TREE → $INSTALL_SHARE/"
+    else
+        log_error "Menu tree not found: $src_tree"
+        exit 1
+    fi
+    
+    # Install service file
+    if [ -f "$src_service" ]; then
+        install -m 644 "$src_service" "$INSTALL_SERVICE/"
+        log_info "Installed $SERVICE_NAME → $INSTALL_SERVICE/"
+    else
+        log_error "Service file not found: $src_service"
+        exit 1
+    fi
+}
+
+update_accessories() {
+    local oled_val="${1:-1}"
+    local rotary_val="${2:-0}"
+    
+    log_info "Updating accessories profile..."
+    
+    mkdir -p "$(dirname "$ACC_CONF")"
+    
+    # Read current values or use defaults
+    local display_large=0
+    if [ -f "$ACC_CONF" ]; then
+        # shellcheck disable=SC1090
+        . "$ACC_CONF" 2>/dev/null || true
+        display_large="${display_large:-0}"
+    fi
+    
+    cat > "$ACC_CONF" <<EOF
+# Nabla Edge accessories profile (managed by nabla-oled-enable)
+# See: nabla-config → Accessories
+display_oled=$oled_val
+rotary=$rotary_val
+display_large=$display_large
+EOF
+    
+    chmod 644 "$ACC_CONF"
+    log_info "Updated $ACC_CONF: oled=$oled_val, rotary=$rotary_val"
+}
+
+enable_service() {
+    log_info "Enabling OLED menu service..."
+    
+    # Stop any old OLED service
+    systemctl stop nabla-oled.service 2>/dev/null || true
+    systemctl disable nabla-oled.service 2>/dev/null || true
+    
+    # Enable the new menu service
+    systemctl daemon-reload
+    systemctl enable "$SERVICE_NAME"
+    systemctl start "$SERVICE_NAME"
+    
+    sleep 2
+    
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        log_info "Service $SERVICE_NAME is running"
+    else
+        log_warn "Service may need a reboot (I2C) — check: journalctl -u $SERVICE_NAME"
+    fi
+}
+
+disable_service() {
+    log_info "Disabling OLED menu service..."
+    
+    systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+    
+    update_accessories 0 0
+    
+    log_info "OLED service disabled"
+}
+
+detect_oled() {
+    # Try to detect OLED on I2C bus
+    if command -v i2cdetect >/dev/null 2>&1; then
+        if i2cdetect -y 1 2>/dev/null | grep -q "3c"; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+show_status() {
+    echo ""
+    echo "=== OLED Menu Status ==="
+    
+    # I2C status
+    if check_i2c; then
+        echo "I2C: enabled"
+        if detect_oled; then
+            echo "OLED: detected at 0x3C"
+        else
+            echo "OLED: not detected (check wiring)"
+        fi
+    else
+        echo "I2C: not enabled"
+    fi
+    
+    # Service status
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo "Service: running"
+    elif systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+        echo "Service: enabled (not running)"
+    else
+        echo "Service: disabled"
+    fi
+    
+    # Accessories profile
+    if [ -f "$ACC_CONF" ]; then
+        echo ""
+        echo "Accessories profile ($ACC_CONF):"
+        cat "$ACC_CONF" | grep -v "^#" | grep -v "^$" | sed 's/^/  /'
+    fi
+    
+    echo ""
+}
+
+usage() {
+    cat <<'EOF'
+nabla-oled-enable — Enable OLED menu shell with rotary encoder
+
+USAGE
+    sudo nabla-oled-enable [OPTIONS]
+
+OPTIONS
+    (none)          Enable OLED menu without rotary encoder
+    --with-rotary   Enable OLED menu + rotary encoder
+    --disable       Disable OLED menu service
+    --status        Show current status
+    --help, -h      Show this help
+
+HARDWARE
+    OLED (SSD1306 I2C):
+        VCC  → 3.3V (pin 1)
+        GND  → GND (pin 6)
+        SDA  → GPIO2 (pin 3)
+        SCL  → GPIO3 (pin 5)
+
+    Rotary Encoder (EC11):
+        CLK (A)  → GPIO17 (pin 11)
+        DT  (B)  → GPIO27 (pin 13)
+        SW       → GPIO22 (pin 15)
+        GND      → any GND pin
+        +        → 3.3V (optional)
+
+EXAMPLES
+    sudo nabla-oled-enable --with-rotary   # Full setup
+    sudo nabla-oled-enable --status        # Check status
+    sudo nabla-oled-enable --disable       # Turn off
+
+SEE ALSO
+    nabla-config → Accessories
+    docs/pi-config-menu/OLED-MENU-DESIGN.md
+EOF
+}
+
+main() {
+    local with_rotary=0
+    local do_disable=0
+    local do_status=0
+    
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --with-rotary)
+                with_rotary=1
+                ;;
+            --disable)
+                do_disable=1
+                ;;
+            --status)
+                do_status=1
+                ;;
+            -h|--help|help)
+                usage
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                usage
+                exit 1
+                ;;
+        esac
+        shift
+    done
+    
+    if [ "$do_status" = "1" ]; then
+        show_status
+        exit 0
+    fi
+    
+    need_root
+    
+    if [ "$do_disable" = "1" ]; then
+        disable_service
+        exit 0
+    fi
+    
+    # Check if running on a Pi
+    if ! is_pi; then
+        log_warn "Not running on a Raspberry Pi — some features may not work"
+    fi
+    
+    # Enable I2C if needed
+    if ! check_i2c; then
+        enable_i2c
+    fi
+    
+    # Install dependencies
+    install_dependencies
+    
+    # Install files
+    install_files
+    
+    # Update accessories profile
+    update_accessories 1 "$with_rotary"
+    
+    # Enable and start service
+    enable_service
+    
+    # Show final status
+    show_status
+    
+    log_info "OLED menu shell enabled!"
+    if [ "$with_rotary" = "1" ]; then
+        log_info "Rotary encoder: GPIO17/27/22 (CLK/DT/SW)"
+    fi
+    
+    if ! detect_oled; then
+        log_warn "OLED not detected — check wiring or reboot for I2C"
+    fi
+}
+
+main "$@"

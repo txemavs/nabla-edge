@@ -18,12 +18,18 @@ A Python OLED renderer that:
 2. Accepts rotary encoder input (rotate = navigate, press = select)
 3. Shares a single source of truth for the menu structure
 
-### Ownership
+### Ownership Split (Confirmed with Spui)
 
-| Component | Owner |
-|-----------|-------|
-| Pi menu model + renderer + encoder service | Edge |
-| Reusable OLED draw helpers / ESP UI | Spui |
+| Component | Owner | Notes |
+|-----------|-------|-------|
+| `nabla-config` menu tree | **Edge** | `menu_tree.yaml` — single source of truth |
+| Pi encoder input (GPIO17/27/22) | **Edge** | BCM pinout, internal pull-ups |
+| Python OLED renderer | **Edge** | Consumes menu tree, renders list |
+| Menu ↔ OLED sync process | **Edge** | Contributor checklist, CI validation |
+| Tiny OLED chrome contract | **Spui** | App supplies list only; shell draws ▶, high-contrast, nabla branding |
+| Keyboard component | **Spui** | `components/keyboard/` in nabla-esp-ui |
+
+> **Reference**: nabla-esp-ui PRs [#19](https://github.com/txemavs/nabla-esp-ui/pull/19), [#21](https://github.com/txemavs/nabla-esp-ui/pull/21) on main.
 
 ---
 
@@ -510,39 +516,94 @@ A linter script could:
 
 ---
 
-## 8. Collaboration: Edge + Spui
+## 8. Collaboration: Edge + Spui (Boundary Contract)
 
-### Interface Boundary
+### Ownership Diagram
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  EDGE owns:                                              │
-│    - menu_tree.yaml (Pi menu model)                      │
-│    - nabla-oled-menu.py (Pi renderer + encoder input)    │
-│    - nabla-config integration                            │
-│    - Encoder GPIO service                                │
-└────────────────────────────┬─────────────────────────────┘
-                             │
-                             │ Shared: ui/ssd/ profiles + tokens
-                             │         (layout regions, fonts, caret style)
-                             │
-┌────────────────────────────┴─────────────────────────────┐
-│  SPUI owns:                                              │
-│    - nabla-esp-ui (ESP32 draw helpers)                   │
-│    - ESPHome display components                          │
-│    - Menu protocol MQTT integration (if used)            │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  EDGE owns (this repo — nabla-edge)                                      │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────────┐ │
+│  │  menu_tree.yaml        ← Single source of truth for menu structure │ │
+│  │  nabla-oled-menu.py    ← Python renderer (list + focus + actions)  │ │
+│  │  Encoder GPIO service  ← GPIO17/27/22, pull-ups, events            │ │
+│  │  Sync process          ← Checklist, CI linter                      │ │
+│  └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                          │
+│  Consumes: Tiny OLED chrome contract (below)                             │
+└──────────────────────────────────────────────────────────────────────────┘
+
+                              ▼  contract boundary  ▼
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  SPUI owns (nabla-esp-ui repo)                                           │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────────┐ │
+│  │  Tiny OLED Chrome Contract                                          │ │
+│  │    - App supplies: list of items + focus index                      │ │
+│  │    - Shell draws: ▶ caret, high-contrast selection, nabla branding  │ │
+│  │    - Keyboard: components/keyboard/ (text entry)                    │ │
+│  │    - Reference: PRs #19, #21 on main                                │ │
+│  └─────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Tiny OLED Chrome Contract
+
+Spui's nabla-esp-ui defines the visual chrome rules for small OLEDs. The Pi renderer **follows the same contract** rather than reinventing borders/keyboard chrome:
+
+| Responsibility | Owner | Rule |
+|----------------|-------|------|
+| **List rendering** | App (Edge) | Supplies `items[]` + `focus_index` |
+| **Selection caret** | Shell (Spui) | Draws `▶` at `CARET_X` for focused item |
+| **High-contrast focus** | Shell (Spui) | Optionally inverts row or uses bold |
+| **Nabla branding** | Shell (Spui) | Status bar, logo glyph, fonts |
+| **Keyboard input** | Shell (Spui) | `components/keyboard/` for text entry |
+
+**Pi implementation**: The Python renderer implements the same visual rules documented in nabla-esp-ui. It does not duplicate chrome logic — just follows the contract.
 
 ### Shared Resources
 
-- `ui/ssd/tokens.yaml` — font sizes, caret character, colors
-- `ui/ssd/profiles/128x64.yaml` — region coordinates
-- `protocols/menu/PROTOCOL.md` — if ESP + Pi both consume MQTT menus later
+| Resource | Location | Purpose |
+|----------|----------|---------|
+| `ui/ssd/tokens.yaml` | nabla-edge | Font sizes, caret char (`▶`), colors |
+| `ui/ssd/profiles/128x64.yaml` | nabla-edge | Region coordinates (status, title, body) |
+| Tiny chrome spec | nabla-esp-ui | Visual rules for ▶, high-contrast, branding |
 
-### Keep Interfaces Thin
+### Menu Structure Sharing
 
-The Pi OLED renderer reads a local YAML file. The ESP renderer may read MQTT JSON per `protocols/menu`. They share layout constants but implement rendering independently.
+The Pi renderer consumes the **same menu structure** as nabla-config. When the main menu changes, the OLED automatically reflects it:
+
+```
+menu_tree.yaml  ──┬──▶  nabla-config (bash/whiptail)
+                  │
+                  └──▶  nabla-oled-menu.py (Python/luma)
+                        └── follows Tiny OLED chrome contract
+```
+
+No duplication of menu labels or hierarchy — one source, multiple renderers.
+
+### Interface Contract Summary
+
+The Pi renderer implements this minimal interface:
+
+```python
+# Pi renderer provides:
+def get_visible_items() -> list[str]:
+    """Labels for visible menu items (2 rows on 128×64)."""
+
+def get_focus_index() -> int:
+    """Index of currently focused item (0-based within visible)."""
+
+# Chrome draws (per Tiny contract):
+# - ▶ at CARET_X for focused row
+# - High-contrast or invert for focused row (optional)
+# - Status bar with clock, icons
+# - Nabla branding on idle screen
+```
+
+This keeps the app logic (menu navigation, actions) separate from visual chrome.
 
 ---
 
@@ -599,7 +660,15 @@ This provides canonical pinout directly in the UI.
 
 ## 12. References
 
+### This Repo (nabla-edge)
+
 - [`nablaedge/docs/accessories/oled-ui/`](../accessories/oled-ui/) — OLED paint layer overview
 - [`nablaedge/ui/ssd/`](../../ui/ssd/) — Layout profiles and tokens
 - [`protocols/menu/PROTOCOL.md`](../../../protocols/menu/PROTOCOL.md) — MQTT menu protocol (ESP focus)
 - [`nablaedge/docs/esphome-patterns/examples/demo-oled-encoder.yaml`](../esphome-patterns/examples/demo-oled-encoder.yaml) — ESP encoder example
+
+### External (nabla-esp-ui)
+
+- [nabla-esp-ui PR #19](https://github.com/txemavs/nabla-esp-ui/pull/19) — Tiny OLED chrome initial implementation
+- [nabla-esp-ui PR #21](https://github.com/txemavs/nabla-esp-ui/pull/21) — Keyboard component
+- `components/keyboard/` — Text entry for ESP OLED (Spui-owned)

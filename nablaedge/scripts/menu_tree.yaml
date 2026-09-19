@@ -1,0 +1,182 @@
+# nabla-config Menu Tree
+# Single source of truth for both whiptail (bash) and OLED (Python) renderers.
+#
+# When you edit nabla-config menus, update this file in the same commit!
+# See: docs/pi-config-menu/OLED-MENU-DESIGN.md
+
+version: "1.0"
+
+# --- OLED Root Shell ---
+# Top-level apps shown when encoder activates from idle (Reloj).
+# Config is one option; more can be added.
+root_shell:
+  default: reloj  # Idle/home screen
+  apps:
+    - id: reloj
+      label: "Reloj"
+      type: clock
+      description: "∇ nabla.net + time (idle/home)"
+    - id: config
+      label: "Config"
+      type: menu
+      submenu: main
+      description: "nabla-config menu tree"
+    # Extension point for future apps:
+    # - id: sensors
+    #   label: "Sensors"
+    #   type: app
+    #   handler: sensors_app
+
+# --- Config Menu Tree ---
+# The nabla-config submenu, entered from root shell "Config" option.
+# Also consumed by nabla-config bash for whiptail rendering.
+menus:
+  main:
+    label: "Nabla Config"
+    items:
+      - id: network
+        label: "Network"
+        submenu: network
+      - id: media
+        label: "Media (USB/SD)"
+        submenu: media
+      - id: accessories
+        label: "Accessories"
+        submenu: accessories
+      - id: camera
+        label: "Camera"
+        action: camera_go2rtc
+      - id: voice
+        label: "Voice Satellite"
+        submenu: voice
+      - id: info
+        label: "Info"
+        action: info
+      - id: exit
+        label: "Exit"
+        action: exit
+
+  network:
+    label: "Network"
+    items:
+      - id: status
+        label: "Status"
+        action: network_status
+      - id: cable
+        label: "CABLE"
+        action: network_cable
+        description: "eth LAN + Tailscale"
+      - id: ap
+        label: "AP"
+        action: network_ap
+        description: "SSID Nabla Net"
+      - id: cable_ap
+        label: "CABLE-AP"
+        action: network_cable_ap
+        description: "eth + wlan1 AP"
+      - id: off
+        label: "OFF"
+        action: network_off
+      - id: back
+        label: "← Back"
+        back: true
+
+  media:
+    label: "Media"
+    items:
+      - id: os_desktop
+        label: "OS desktop"
+        action: media_write_desktop
+        description: "Nabla Pi OS full → USB/SD"
+      - id: os_lite
+        label: "OS lite"
+        action: media_write_lite
+        description: "Nabla Pi OS lite → USB/SD"
+      - id: otp
+        label: "OTP enabler"
+        action: media_write_otp
+        description: "Pi 3B USB boot"
+      - id: list
+        label: "List disks"
+        action: media_list_disks
+      - id: download
+        label: "Download image"
+        action: media_download
+      - id: back
+        label: "← Back"
+        back: true
+
+  accessories:
+    label: "Accessories"
+    items:
+      - id: oled
+        label: "OLED I2C"
+        action: acc_toggle_oled
+        state_key: display_oled
+        description: "SSD1306 128×64"
+      - id: rotary
+        label: "Rotary encoder"
+        action: acc_toggle_rotary
+        state_key: rotary
+        description: "EC11 GPIO17/27/22"
+      - id: large
+        label: "Large SPI"
+        action: acc_toggle_large
+        state_key: display_large
+      - id: apply_oled
+        label: "Apply OLED now"
+        action: acc_apply_oled
+      - id: view
+        label: "View profile"
+        action: acc_view
+      - id: back
+        label: "← Back"
+        back: true
+
+  voice:
+    label: "Voice Satellite"
+    items:
+      - id: install
+        label: "Install / update"
+        action: voice_install
+      - id: name
+        label: "Satellite name"
+        action: voice_set_name
+        state_key: satellite_name
+      - id: port
+        label: "ESPHome port"
+        action: voice_set_port
+        state_key: port
+      - id: mode
+        label: "Trigger mode"
+        action: voice_toggle_mode
+        state_key: mode
+      - id: wake_word
+        label: "Wake word"
+        action: voice_set_wake
+        state_key: wake_word
+      - id: start
+        label: "Start LVA"
+        action: voice_start
+      - id: stop
+        label: "Stop LVA"
+        action: voice_stop
+      - id: status
+        label: "View status"
+        action: voice_status
+      - id: ha_help
+        label: "HA Instructions"
+        action: voice_ha_help
+      - id: back
+        label: "← Back"
+        back: true
+
+# Action handlers are mapped in:
+#   - nabla-config (bash): shell functions
+#   - nabla-oled-menu.py: subprocess calls or inline Python
+#
+# Example action mapping in Python:
+#   action_map = {
+#       "network_cable": ["sudo", "vpn-mode", "cable"],
+#       "acc_toggle_oled": toggle_accessory("display_oled"),
+#   }

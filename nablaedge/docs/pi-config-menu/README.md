@@ -175,8 +175,33 @@ OPTIONS:
 
 ---
 
+## OLED Menu Mirror
+
+The menu structure can also render on a small I2C OLED display (SSD1306 128×64) navigated via rotary encoder. This allows headless configuration without SSH.
+
+See **[OLED-MENU-DESIGN.md](OLED-MENU-DESIGN.md)** for the full design document.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `scripts/menu_tree.yaml` | Single source of truth for menu structure |
+| `scripts/nabla-oled-menu.py` | Python OLED renderer (stub) |
+| `docs/pi-config-menu/OLED-MENU-DESIGN.md` | Architecture + pinout |
+
+### Contributor Checklist
+
+When editing `nabla-config` menus:
+
+- [ ] Update `scripts/menu_tree.yaml` with matching changes
+- [ ] Verify new actions have handler mappings
+- [ ] Test both whiptail and OLED rendering if hardware available
+
+---
+
 ## Related
 
 - [../accessories/](../accessories/) — Hardware flags detail
 - [../network-modes/](../network-modes/) — Network mode concepts
 - [../voice-satellite/](../voice-satellite/) — Voice satellite setup (LVA)
+- [OLED-MENU-DESIGN.md](OLED-MENU-DESIGN.md) — OLED menu architecture

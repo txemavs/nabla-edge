@@ -6,6 +6,30 @@
 
 version: "1.0"
 
+# --- OLED Root Shell ---
+# Top-level apps shown when encoder activates from idle (Reloj).
+# Config is one option; more can be added.
+root_shell:
+  default: reloj  # Idle/home screen
+  apps:
+    - id: reloj
+      label: "Reloj"
+      type: clock
+      description: "∇ nabla.net + time (idle/home)"
+    - id: config
+      label: "Config"
+      type: menu
+      submenu: main
+      description: "nabla-config menu tree"
+    # Extension point for future apps:
+    # - id: sensors
+    #   label: "Sensors"
+    #   type: app
+    #   handler: sensors_app
+
+# --- Config Menu Tree ---
+# The nabla-config submenu, entered from root shell "Config" option.
+# Also consumed by nabla-config bash for whiptail rendering.
 menus:
   main:
     label: "Nabla Config"

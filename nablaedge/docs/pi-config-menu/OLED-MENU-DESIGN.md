@@ -20,16 +20,19 @@ A Python OLED renderer that:
 
 ### Ownership Split (Confirmed with Spui)
 
+> **Contract Spui; implementación Pi = Edge / ESP = nabla-esp-ui**
+
 | Component | Owner | Notes |
 |-----------|-------|-------|
 | `nabla-config` menu tree | **Edge** | `menu_tree.yaml` — single source of truth |
 | Pi encoder input (GPIO17/27/22) | **Edge** | BCM pinout, internal pull-ups |
-| Python OLED renderer | **Edge** | Consumes menu tree, renders list |
+| Python OLED renderer | **Edge** | Implements Tiny chrome contract on Pi |
 | Menu ↔ OLED sync process | **Edge** | Contributor checklist, CI validation |
-| Tiny OLED chrome contract | **Spui** | App supplies list only; shell draws ▶, high-contrast, nabla branding |
-| Keyboard component | **Spui** | `components/keyboard/` in nabla-esp-ui |
+| **Tiny OLED chrome contract (rules)** | **Spui** | Defines focus/input behavior for all platforms |
+| ESP OLED implementation | **Spui** | nabla-esp-ui implements the contract |
+| Keyboard contract | **Spui** | `components/keyboard/` in nabla-esp-ui |
 
-> **Reference**: nabla-esp-ui PRs [#19](https://github.com/txemavs/nabla-esp-ui/pull/19), [#21](https://github.com/txemavs/nabla-esp-ui/pull/21) on main.
+> **References**: nabla-esp-ui PRs [#15](https://github.com/txemavs/nabla-esp-ui/pull/15), [#16](https://github.com/txemavs/nabla-esp-ui/pull/16), [#19](https://github.com/txemavs/nabla-esp-ui/pull/19), [#20](https://github.com/txemavs/nabla-esp-ui/pull/20), [#21](https://github.com/txemavs/nabla-esp-ui/pull/21) on main.
 
 ---
 
@@ -542,50 +545,76 @@ A linter script could:
 
 ## 8. Collaboration: Edge + Spui (Boundary Contract)
 
+> **Contract Spui; implementación Pi = Edge / ESP = nabla-esp-ui**
+>
+> Spui owns the **Tiny OLED chrome rules** (the contract). Each platform implements those rules:
+> - **Pi**: Edge Python renderer (`nabla-oled-menu.py`)
+> - **ESP**: nabla-esp-ui display components
+
 ### Ownership Diagram
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  EDGE owns (this repo — nabla-edge)                                      │
+│  SPUI owns: Tiny OLED Chrome CONTRACT (rules)                            │
 │                                                                          │
 │  ┌─────────────────────────────────────────────────────────────────────┐ │
-│  │  menu_tree.yaml        ← Single source of truth for menu structure │ │
-│  │  nabla-oled-menu.py    ← Python renderer (list + focus + actions)  │ │
-│  │  Encoder GPIO service  ← GPIO17/27/22, pull-ups, events            │ │
-│  │  Sync process          ← Checklist, CI linter                      │ │
-│  └─────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│  Consumes: Tiny OLED chrome contract (below)                             │
-└──────────────────────────────────────────────────────────────────────────┘
-
-                              ▼  contract boundary  ▼
-
-┌──────────────────────────────────────────────────────────────────────────┐
-│  SPUI owns (nabla-esp-ui repo)                                           │
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────────┐ │
-│  │  Tiny OLED Chrome Contract                                          │ │
+│  │  Tiny Chrome Rules:                                                 │ │
 │  │    - App supplies: list of items + focus index                      │ │
-│  │    - Shell draws: ▶ caret, high-contrast selection, nabla branding  │ │
-│  │    - Keyboard: components/keyboard/ (text entry)                    │ │
-│  │    - Reference: PRs #19, #21 on main                                │ │
+│  │    - Normal mode: ▶ caret marks focus                               │ │
+│  │    - Alto contraste mode: inverted bar on focus row                 │ │
+│  │    - Keyboard contract: components/keyboard/                        │ │
+│  │    - Reference: PRs #15, #16, #19, #20, #21 on nabla-esp-ui main    │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────┘
+
+        ▼  implements contract  ▼              ▼  implements contract  ▼
+
+┌────────────────────────────────────┐    ┌────────────────────────────────┐
+│  EDGE owns (Pi implementation)     │    │  SPUI owns (ESP implementation)│
+│                                    │    │                                │
+│  nabla-oled-menu.py                │    │  nabla-esp-ui display          │
+│  - Reads menu_tree.yaml            │    │  - Reads MQTT menu JSON        │
+│  - Implements chrome rules         │    │  - Implements chrome rules     │
+│  - Encoder GPIO service            │    │  - Encoder/touch input         │
+└────────────────────────────────────┘    └────────────────────────────────┘
 ```
 
-### Tiny OLED Chrome Contract
+### Ownership Table
 
-Spui's nabla-esp-ui defines the visual chrome rules for small OLEDs. The Pi renderer **follows the same contract** rather than reinventing borders/keyboard chrome:
+| What | Owner | Notes |
+|------|-------|-------|
+| **Tiny chrome contract (rules)** | Spui | Defines visual behavior for all OLED platforms |
+| **Pi chrome implementation** | Edge | Python renderer implements the rules |
+| **ESP chrome implementation** | Spui | nabla-esp-ui implements the rules |
+| `menu_tree.yaml` | Edge | Single source of truth for Pi menu structure |
+| Encoder GPIO (GPIO17/27/22) | Edge | BCM pinout, pull-ups, events |
+| Keyboard contract | Spui | `components/keyboard/` in nabla-esp-ui |
+| **Pi keyboard implementation** | Edge | Must align with Spui keyboard contract (no ad-hoc) |
 
-| Responsibility | Owner | Rule |
-|----------------|-------|------|
-| **List rendering** | App (Edge) | Supplies `items[]` + `focus_index` |
-| **Selection caret** | Shell (Spui) | Draws `▶` at `CARET_X` for focused item |
-| **High-contrast focus** | Shell (Spui) | Optionally inverts row or uses bold |
-| **Nabla branding** | Shell (Spui) | Status bar, logo glyph, fonts |
-| **Keyboard input** | Shell (Spui) | `components/keyboard/` for text entry |
+### Tiny OLED Chrome Contract (Rules)
 
-**Pi implementation**: The Python renderer implements the same visual rules documented in nabla-esp-ui. It does not duplicate chrome logic — just follows the contract.
+The Tiny contract defines how focus and input work across all OLED platforms:
+
+| Rule | Normal Mode | Alto Contraste Mode |
+|------|-------------|---------------------|
+| **Focus indicator** | `▶` caret at `CARET_X` | Inverted bar (white-on-black row) |
+| **Non-focused items** | Plain text | Plain text |
+| **Scrolling** | Keep focus in visible region | Same |
+
+> **Global setting**: Normal vs Alto contraste is a **system-wide** appearance setting (from Ajustes/Appearance), not per-screen. The renderer reads this setting and applies the appropriate focus style everywhere.
+
+### Text Input Contract
+
+When a menu item requires text input (e.g., entering a hostname), the renderer must follow the keyboard contract:
+
+| Principle | Rule |
+|-----------|------|
+| **No ad-hoc keyboard** | Pi renderer must NOT embed a custom keyboard implementation |
+| **Semantic field** | App declares "this field needs text input" |
+| **Shell chooses input source** | Compact encoder chars, touch keyboard, or **BT HID** if paired/focused |
+| **Contract alignment** | Pi keyboard (if needed) must align with `components/keyboard/` in nabla-esp-ui |
+
+For Phase 1 (this PR), text input is out of scope. Future implementation must follow this contract.
 
 ### Shared Resources
 
@@ -593,7 +622,8 @@ Spui's nabla-esp-ui defines the visual chrome rules for small OLEDs. The Pi rend
 |----------|----------|---------|
 | `ui/ssd/tokens.yaml` | nabla-edge | Font sizes, caret char (`▶`), colors |
 | `ui/ssd/profiles/128x64.yaml` | nabla-edge | Region coordinates (status, title, body) |
-| Tiny chrome spec | nabla-esp-ui | Visual rules for ▶, high-contrast, branding |
+| Tiny chrome contract | nabla-esp-ui | Visual rules (implemented by each platform) |
+| Keyboard contract | nabla-esp-ui | `components/keyboard/` (PRs #15, #16, #20, #21) |
 
 ### Menu Structure Sharing
 
@@ -603,7 +633,7 @@ The Pi renderer consumes the **same menu structure** as nabla-config. When the m
 menu_tree.yaml  ──┬──▶  nabla-config (bash/whiptail)
                   │
                   └──▶  nabla-oled-menu.py (Python/luma)
-                        └── follows Tiny OLED chrome contract
+                        └── implements Tiny chrome contract
 ```
 
 No duplication of menu labels or hierarchy — one source, multiple renderers.
@@ -613,21 +643,22 @@ No duplication of menu labels or hierarchy — one source, multiple renderers.
 The Pi renderer implements this minimal interface:
 
 ```python
-# Pi renderer provides:
+# App provides (Edge):
 def get_visible_items() -> list[str]:
     """Labels for visible menu items (2 rows on 128×64)."""
 
 def get_focus_index() -> int:
     """Index of currently focused item (0-based within visible)."""
 
-# Chrome draws (per Tiny contract):
-# - ▶ at CARET_X for focused row
-# - High-contrast or invert for focused row (optional)
+# Chrome implementation (Edge, per Spui contract):
+# - Normal: ▶ at CARET_X for focused row
+# - Alto contraste: inverted bar for focused row
 # - Status bar with clock, icons
 # - Nabla branding on idle screen
+# - Text input: defer to keyboard contract (no ad-hoc)
 ```
 
-This keeps the app logic (menu navigation, actions) separate from visual chrome.
+This keeps the app logic (menu navigation, actions) separate from visual chrome, while ensuring Pi and ESP have consistent UX.
 
 ---
 
@@ -693,6 +724,9 @@ This provides canonical pinout directly in the UI.
 
 ### External (nabla-esp-ui)
 
-- [nabla-esp-ui PR #19](https://github.com/txemavs/nabla-esp-ui/pull/19) — Tiny OLED chrome initial implementation
-- [nabla-esp-ui PR #21](https://github.com/txemavs/nabla-esp-ui/pull/21) — Keyboard component
-- `components/keyboard/` — Text entry for ESP OLED (Spui-owned)
+- [nabla-esp-ui PR #15](https://github.com/txemavs/nabla-esp-ui/pull/15) — Keyboard component foundation
+- [nabla-esp-ui PR #16](https://github.com/txemavs/nabla-esp-ui/pull/16) — Keyboard in `components/keyboard/`
+- [nabla-esp-ui PR #19](https://github.com/txemavs/nabla-esp-ui/pull/19) — Tiny OLED chrome philosophy
+- [nabla-esp-ui PR #20](https://github.com/txemavs/nabla-esp-ui/pull/20) — Keyboard refinements
+- [nabla-esp-ui PR #21](https://github.com/txemavs/nabla-esp-ui/pull/21) — Keyboard component completion
+- `components/keyboard/` — Text input contract for OLED (Spui-owned, Pi must align)

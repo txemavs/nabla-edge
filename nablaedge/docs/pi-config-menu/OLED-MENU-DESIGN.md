@@ -690,7 +690,9 @@ This provides canonical pinout directly in the UI.
 | Path | Description | Owner |
 |------|-------------|-------|
 | `nablaedge/scripts/menu_tree.yaml` | Menu structure definition | Edge |
-| `nablaedge/scripts/nabla-oled-menu.py` | Python OLED renderer (sketch) | Edge |
+| `nablaedge/scripts/nabla-oled-menu.py` | Python OLED renderer (production) | Edge |
+| `nablaedge/scripts/nabla-oled-enable` | Installation/enable script | Edge |
+| `nablaedge/scripts/systemd/nabla-oled-menu.service` | Systemd service unit | Edge |
 | `nablaedge/scripts/nabla-config` | Whiptail menu (updates rotary message) | Edge |
 | `nablaedge/docs/pi-config-menu/OLED-MENU-DESIGN.md` | This document | Edge |
 | `nablaedge/ui/ssd/` | Shared layout profiles + tokens | Edge/Spui |
@@ -700,23 +702,148 @@ This provides canonical pinout directly in the UI.
 
 ## 11. Implementation Phases
 
-### Phase 1: Design + Stubs (This PR)
+### Phase 1: Design + Stubs ✅
 
 - Design document (this file)
 - `menu_tree.yaml` initial structure
 - `nabla-oled-menu.py` skeleton/stub
 - Updated `nabla-config` rotary message
 
-### Phase 2: Working Renderer
+### Phase 2: Working Renderer ✅
 
 - Full `nabla-oled-menu.py` implementation
-- Systemd service
+- `nabla-oled-menu.service` systemd unit
+- `nabla-oled-enable` installation script
 - Testing on Pi hardware
 
-### Phase 3: Sync Validation
+### Phase 3: Sync Validation (Future)
 
 - CI linter for menu_tree ↔ nabla-config sync
 - Integration with existing OLED clock service
+
+---
+
+## 12. Installation & Testing
+
+### Quick Install (Pi with OLED + EC11)
+
+```bash
+# Clone or update repo
+git clone https://github.com/txemavs/nabla-edge.git
+cd nabla-edge/nablaedge/scripts
+
+# Enable OLED menu with rotary encoder
+sudo ./nabla-oled-enable --with-rotary
+
+# Check status
+sudo ./nabla-oled-enable --status
+```
+
+### Manual Installation
+
+```bash
+# 1. Install dependencies
+sudo apt install python3-pip i2c-tools
+pip3 install luma.oled PyYAML
+
+# 2. Copy files
+sudo cp nabla-oled-menu.py /usr/local/bin/
+sudo cp menu_tree.yaml /usr/share/nabla-edge/
+sudo cp systemd/nabla-oled-menu.service /etc/systemd/system/
+
+# 3. Enable I2C (if not already)
+sudo raspi-config nonint do_i2c 0
+# or: echo "dtparam=i2c_arm=on" | sudo tee -a /boot/firmware/config.txt
+
+# 4. Enable service
+sudo systemctl daemon-reload
+sudo systemctl enable nabla-oled-menu.service
+sudo systemctl start nabla-oled-menu.service
+```
+
+### Hardware Wiring
+
+**OLED (SSD1306 I2C):**
+
+| OLED Pin | Pi Connection |
+|----------|---------------|
+| VCC | 3.3V (pin 1) |
+| GND | GND (pin 6) |
+| SDA | GPIO2 (pin 3) |
+| SCL | GPIO3 (pin 5) |
+
+**Rotary Encoder (EC11):**
+
+| Encoder Pin | BCM GPIO | Physical Pin |
+|-------------|----------|--------------|
+| CLK (A) | GPIO17 | Pin 11 |
+| DT (B) | GPIO27 | Pin 13 |
+| SW | GPIO22 | Pin 15 |
+| GND | GND | Pin 6/9/14 |
+| + (3V3) | 3V3 | Pin 1 (optional) |
+
+### Testing Steps
+
+1. **Verify I2C detection:**
+   ```bash
+   i2cdetect -y 1
+   # Should show "3c" at address row 30
+   ```
+
+2. **Check service logs:**
+   ```bash
+   journalctl -u nabla-oled-menu.service -f
+   ```
+
+3. **Test OLED rendering:**
+   - Display should show nabla logo + "nabla.net" + time (Reloj mode)
+   - Rotate encoder → root menu appears (Reloj / Config)
+   - Press encoder → enters selected app
+
+4. **Test menu navigation:**
+   - Select "Config" → shows nabla-config menu tree
+   - Rotate to navigate, press to select/enter
+   - "← Back" returns to parent menu
+   - "Exit" returns to root shell
+   - 60s idle → returns to Reloj
+
+### Dry-Run Mode (No Hardware)
+
+```bash
+cd nablaedge/scripts
+python3 nabla-oled-menu.py
+# Runs in text mode if luma.oled or GPIO not available
+```
+
+### Troubleshooting
+
+| Issue | Check |
+|-------|-------|
+| OLED blank | I2C enabled? `sudo raspi-config` → Interfaces → I2C |
+| OLED blank | Wiring correct? Use `i2cdetect -y 1` |
+| Encoder no response | GPIO pins correct? Check CLK/DT/SW wiring |
+| Service won't start | `journalctl -u nabla-oled-menu -e` for errors |
+| "luma.oled not installed" | `pip3 install luma.oled` |
+
+### Integration with nabla-config
+
+The OLED menu integrates with the accessories profile:
+
+```bash
+# Enable via nabla-config (whiptail menu)
+sudo nabla-config accessories
+# → Toggle "OLED I2C" to ON
+# → Toggle "Rotary encoder" to ON
+# → Select "Apply OLED now"
+```
+
+This updates `/etc/nabla-net/accessories.conf`:
+
+```ini
+display_oled=1
+rotary=1
+display_large=0
+```
 
 ---
 

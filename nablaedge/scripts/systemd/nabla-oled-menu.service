@@ -1,0 +1,37 @@
+# /etc/systemd/system/nabla-oled-menu.service
+# OLED Root Shell with Reloj (clock) + Config menu navigation
+# Navigated via EC11 rotary encoder (GPIO17/27/22)
+#
+# Installation:
+#   sudo cp nabla-oled-menu.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable nabla-oled-menu.service
+#   sudo systemctl start nabla-oled-menu.service
+#
+# See: docs/pi-config-menu/OLED-MENU-DESIGN.md
+
+[Unit]
+Description=Nabla OLED Menu Shell (Reloj + Config)
+Documentation=https://github.com/txemavs/nabla-edge/blob/main/nablaedge/docs/pi-config-menu/OLED-MENU-DESIGN.md
+After=multi-user.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/nabla-oled-menu.py
+Restart=on-failure
+RestartSec=5
+User=root
+Environment=PYTHONUNBUFFERED=1
+
+# Resource limits
+Nice=10
+MemoryMax=64M
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nabla-oled-menu
+
+[Install]
+WantedBy=multi-user.target

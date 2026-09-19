@@ -181,20 +181,44 @@ The menu structure can also render on a small I2C OLED display (SSD1306 128×64)
 
 See **[OLED-MENU-DESIGN.md](OLED-MENU-DESIGN.md)** for the full design document.
 
+### Quick Start
+
+```bash
+# On a Pi with SSD1306 OLED + EC11 encoder:
+cd nablaedge/scripts
+sudo ./nabla-oled-enable --with-rotary
+```
+
 ### Key Files
 
 | File | Purpose |
 |------|---------|
 | `scripts/menu_tree.yaml` | Single source of truth for menu structure |
-| `scripts/nabla-oled-menu.py` | Python OLED renderer (stub) |
+| `scripts/nabla-oled-menu.py` | Python OLED renderer (production) |
+| `scripts/nabla-oled-enable` | Installation/enable script |
+| `scripts/systemd/nabla-oled-menu.service` | Systemd service unit |
 | `docs/pi-config-menu/OLED-MENU-DESIGN.md` | Architecture + pinout |
+
+### OLED Modes
+
+| Mode | Description |
+|------|-------------|
+| **Reloj** | Clock/idle screen: ∇ logo + "nabla.net" + HH:MM |
+| **Root Menu** | App selector: Reloj / Config |
+| **Config** | nabla-config menu tree navigation |
+
+### Encoder Controls
+
+- **Rotate** → Navigate up/down in menus
+- **Press** → Select item / enter submenu
+- **60s idle** → Returns to Reloj (clock)
 
 ### Contributor Checklist
 
 When editing `nabla-config` menus:
 
 - [ ] Update `scripts/menu_tree.yaml` with matching changes
-- [ ] Verify new actions have handler mappings
+- [ ] Verify new actions have handler mappings in `nabla-oled-menu.py`
 - [ ] Test both whiptail and OLED rendering if hardware available
 
 ---

@@ -2,6 +2,9 @@
 
 How to install ∇ NablaEdge from the public APT repository, and how the release pipeline works.
 
+> **Maintainers**: See [RELEASE.md](RELEASE.md) for the **mandatory** release checklist.
+> Every Edge release must be published to APT and tarball — this is the fleet update path.
+
 ---
 
 ## Quick Install (APT)

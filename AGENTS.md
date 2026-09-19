@@ -101,3 +101,15 @@ When generating code or examples for this repository:
 4. Use `example_*` pattern for all entity IDs
 5. Verify no private IPs slip into generated content
 6. When in doubt, use `CHANGE_ME`
+
+---
+
+## Release Policy
+
+**NablaEdge releases must be published to the Coco APT repository.**
+
+Do not ship Pi-only copies or manual updates without publishing to:
+- APT repo at `coco.nabla.net/apt/` (fleet updates via `apt upgrade`)
+- Tarball at `coco.nabla.net/nabla.net/packages/` (manual/offline installs)
+
+See [nablaedge/docs/packages-apt/RELEASE.md](nablaedge/docs/packages-apt/RELEASE.md) for the full release checklist.

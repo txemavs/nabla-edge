@@ -97,3 +97,7 @@ See [examples/README.md](examples/README.md) for guidance on adapting these to y
 ## License
 
 See individual component directories for licensing information.
+
+## Contributing
+
+> **IMPORTANT: Rule zero.** Look first and reuse: before building any new system, helper, path or format, search this repo and the other Nabla repos and reuse or extend what exists. No parallel systems, no stopgap fixes; fix the root cause in the shared generic path. See [AGENTS.md](AGENTS.md).

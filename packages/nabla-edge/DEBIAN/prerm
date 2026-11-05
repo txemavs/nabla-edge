@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+  remove|upgrade)
+    # Remove symlinks
+    for cmd in nabla-config nabla-net vpn-mode nabla-image; do
+      rm -f "/usr/local/bin/$cmd"
+    done
+    ;;
+esac
+
+exit 0

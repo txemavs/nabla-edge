@@ -1,0 +1,17 @@
+Package: nabla-edge
+Version: 0.9.1
+Architecture: all
+Maintainer: Nabla Team <info@nabla.net>
+Section: admin
+Priority: optional
+Depends: whiptail, curl
+Suggests: docker.io
+Description: Nabla Edge tools for Raspberry Pi
+ Interactive configuration tools, network management, and imaging
+ utilities for Nabla Edge devices.
+ .
+ Includes:
+  - nabla-config: Interactive whiptail configuration menu
+  - nabla-net: Network mode management (cable, ap, cable-ap, off)
+  - vpn-mode: Mesh overlay network integration
+  - nabla-image: SD/USB imaging tool for new nodes

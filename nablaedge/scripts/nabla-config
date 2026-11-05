@@ -3,7 +3,7 @@
 # Usage: sudo nabla-config
 set -euo pipefail
 
-VERSION="0.8.0"
+VERSION="0.9.1"
 OWNER="${SUDO_USER:-$USER}"
 REAL_HOME="$(getent passwd "$OWNER" | cut -d: -f6)"
 REAL_HOME="${REAL_HOME:-$HOME}"
@@ -703,26 +703,155 @@ menu_voice() {
   done
 }
 
+# --- Update / APT helpers ---
+NABLA_LIST="/etc/apt/sources.list.d/nabla.list"
+NABLA_LIST_CONTENT="deb [trusted=yes] https://coco.nabla.net/apt/ stable main"
+
+update_get_installed_version() {
+  if [ -f /opt/nabla-edge/VERSION ]; then
+    cat /opt/nabla-edge/VERSION
+  elif dpkg-query -W -f='${Version}' nabla-edge 2>/dev/null; then
+    :
+  else
+    echo "$VERSION"
+  fi
+}
+
+update_get_available_version() {
+  apt-cache policy nabla-edge 2>/dev/null | grep -E 'Candidate:' | awk '{print $2}'
+}
+
+update_ensure_apt_source() {
+  if [ ! -f "$NABLA_LIST" ]; then
+    echo "$NABLA_LIST_CONTENT" > "$NABLA_LIST"
+    chmod 644 "$NABLA_LIST"
+    return 0
+  fi
+  if ! grep -q "coco.nabla.net/apt" "$NABLA_LIST" 2>/dev/null; then
+    echo "$NABLA_LIST_CONTENT" >> "$NABLA_LIST"
+    return 0
+  fi
+  return 1
+}
+
+update_check() {
+  need_root
+  local installed available added=0
+
+  if update_ensure_apt_source; then
+    added=1
+    msg "APT Source" "Nabla APT source added:\n$NABLA_LIST\n\nNow you can receive updates via apt."
+  fi
+
+  clear 2>/dev/null || true
+  echo "Checking for updates..."
+  apt-get update -qq 2>/dev/null || apt-get update
+
+  installed="$(update_get_installed_version)"
+  available="$(update_get_available_version)"
+
+  if [ -z "$available" ] || [ "$available" = "(none)" ]; then
+    msg "Update Check" "Current version: $installed\n\nNo version available from apt.\nCheck network or apt source."
+    return 1
+  fi
+
+  if [ "$installed" = "$available" ]; then
+    msg "Update Check" "Current version: $installed\nAvailable: $available\n\nYou are up to date!"
+  else
+    if ask_yes "Update Available" "Current: $installed\nAvailable: $available\n\nUpgrade now?"; then
+      update_install
+    fi
+  fi
+}
+
+update_install() {
+  need_root
+  local old_ver new_ver
+
+  old_ver="$(update_get_installed_version)"
+
+  clear 2>/dev/null || true
+  echo "Upgrading nabla-edge..."
+  
+  if apt-get install --only-upgrade -y nabla-edge; then
+    new_ver="$(update_get_installed_version)"
+    msg "Update Complete" "Upgraded: $old_ver → $new_ver\n\nRestart nabla-config to use the new version."
+  else
+    msg "Update Failed" "apt install failed.\nCheck terminal for errors."
+  fi
+}
+
+update_status() {
+  local installed available src_ok="NO"
+  installed="$(update_get_installed_version)"
+  
+  if [ -f "$NABLA_LIST" ] && grep -q "coco.nabla.net" "$NABLA_LIST" 2>/dev/null; then
+    src_ok="YES"
+  fi
+
+  available="$(update_get_available_version 2>/dev/null)"
+  [ -z "$available" ] && available="(run apt update)"
+
+  printf 'Installed version:  %s\n' "$installed"
+  printf 'Available version:  %s\n' "$available"
+  printf 'APT source present: %s\n' "$src_ok"
+  printf '\nSource file: %s\n' "$NABLA_LIST"
+  printf 'Repository:  https://coco.nabla.net/apt/\n'
+}
+
+menu_update() {
+  while true; do
+    local c=""
+    if have_wt; then
+      c=$(whiptail --title "$TITLE · Update" --menu \
+        "Keep Nabla Edge up to date via APT.\n\nRepository: coco.nabla.net/apt" 18 72 8 \
+        "1" "Check for updates" \
+        "2" "Install update now" \
+        "3" "View status" \
+        "4" "Add/repair APT source" \
+        "5" "Back" \
+        3>&1 1>&2 2>&3) || return 0
+    else
+      echo "Update: 1 check 2 install 3 status 4 add-source 5 back"
+      read -r -p "> " c
+    fi
+    case "$c" in
+      1) update_check ;;
+      2) update_install ;;
+      3) msg "Update Status" "$(update_status)" ;;
+      4)
+        if update_ensure_apt_source; then
+          msg "APT Source" "Added Nabla APT source:\n$NABLA_LIST"
+        else
+          msg "APT Source" "Source already configured:\n$NABLA_LIST"
+        fi
+        ;;
+      5|"") return 0 ;;
+    esac
+  done
+}
+
 cmd_info() {
-  msg "Info" "Nabla Config $VERSION\n\n• Network: cable / AP / cable-ap / off\n• Media: Nabla Pi OS or OTP\n• USB hotplug: dialog (OS / OTP / open)\n• Accessories: OLED / rotary / SPI\n• Camera / voice\n\nRepo: coco.nabla.net/packages"
+  msg "Info" "Nabla Config $VERSION\n\n• Network: cable / AP / cable-ap / off\n• Media: Nabla Pi OS or OTP\n• USB hotplug: dialog (OS / OTP / open)\n• Accessories: OLED / rotary / SPI\n• Camera / voice\n• Update: apt upgrade via coco.nabla.net\n\nRepo: coco.nabla.net/apt"
 }
 
 menu() {
   while true; do
     local c=""
     if have_wt; then
-      c=$(whiptail --title "$TITLE" --menu "Nabla Edge Panel" 20 72 11 \
+      c=$(whiptail --title "$TITLE" --menu "Nabla Edge Panel" 22 72 12 \
         "1" "Network" \
         "2" "Media (USB/SD)" \
         "3" "Accessories" \
         "4" "Camera" \
         "5" "Voice Satellite" \
-        "6" "Info" \
-        "7" "Exit" \
+        "6" "Update" \
+        "7" "Info" \
+        "8" "Exit" \
         3>&1 1>&2 2>&3) || return 0
     else
       echo "===== $TITLE ====="
-      echo "1 Network  2 Media  3 Accessories  4 Camera  5 Voice  6 Info  7 Exit"
+      echo "1 Network  2 Media  3 Accessories  4 Camera  5 Voice  6 Update  7 Info  8 Exit"
       read -r -p "> " c
     fi
     case "$c" in
@@ -731,8 +860,9 @@ menu() {
       3) menu_accessories ;;
       4) enable_camera ;;
       5) menu_voice ;;
-      6) cmd_info ;;
-      7|"") return 0 ;;
+      6) menu_update ;;
+      7) cmd_info ;;
+      8|"") return 0 ;;
     esac
   done
 }
@@ -747,7 +877,7 @@ NAME
 
 SYNOPSIS
     sudo nabla-config
-    sudo nabla-config network|media|accessories|oled|voice
+    sudo nabla-config network|media|accessories|oled|voice|update
     nabla-config --help
 
 DESCRIPTION
@@ -782,11 +912,18 @@ MENUS
           - Wake word detection (optional)
         Config: /etc/nabla-edge/voice.conf
 
+    Update
+        Check for updates and upgrade nabla-edge via APT.
+        Repository: https://coco.nabla.net/apt/
+        Source file: /etc/apt/sources.list.d/nabla.list
+
 FILES
     /etc/nabla-net/accessories.conf
         Accessories profile read by installers and helpers.
     /etc/nabla-edge/voice.conf
         Voice satellite configuration.
+    /etc/apt/sources.list.d/nabla.list
+        APT source for nabla-edge updates.
     /opt/nabla-edge/voice/lva/
         Linux Voice Assistant Docker Compose files.
 
@@ -803,6 +940,7 @@ H
     accessories|acc) need_root; menu_accessories ;;
     oled) need_root; enable_oled ;;
     voice) need_root; menu_voice ;;
+    update) need_root; menu_update ;;
     *) echo "Usage: sudo nabla-config"; exit 1 ;;
   esac
 }

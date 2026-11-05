@@ -1,0 +1,21 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+  configure)
+    # Create symlinks for CLIs in PATH
+    for cmd in nabla-config nabla-net vpn-mode nabla-image; do
+      if [ -x "/opt/nabla-edge/bin/$cmd" ]; then
+        ln -sf "/opt/nabla-edge/bin/$cmd" "/usr/local/bin/$cmd"
+      fi
+    done
+
+    # Ensure nabla-edge directories exist
+    install -d -m 755 /etc/nabla-edge
+    install -d -m 755 /etc/nabla-net
+
+    echo "Nabla Edge installed. Run: sudo nabla-config"
+    ;;
+esac
+
+exit 0

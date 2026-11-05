@@ -43,8 +43,8 @@ Wall-mounted Pis are triggered remotely — users don't walk to the device. Use 
 Desktop hosts can run continuous wake word detection.
 
 - **Mode:** `wake`
-- **Wake word:** `ok_nabu` (built-in), custom models planned
-- **Custom wake word:** "Oye Veronica" ready — see [custom-wake-words/](custom-wake-words/)
+- **Wake word:** `ok_nabu` (built-in), custom models available
+- **Custom wake word:** "Oye Veronica" v2 ready — see [custom-wake-words/](custom-wake-words/)
 - **Note:** HA `start_conversation` also works as a fallback
 
 ---
@@ -219,7 +219,7 @@ Continuous wake word detection using microWakeWord. Uses more CPU but enables ha
 **Available wake words:** `hey_jarvis`, `ok_nabu`, `alexa`, `hey_mycroft`
 
 **Custom wake word:**
-- "Oye Veronica" — first-pass model ready
+- "Oye Veronica" — v2 ready (cutoff 0.88)
 - Model files (`.tflite` + `.json`) deploy to `/app/wakewords/custom/`
 - See [custom-wake-words/](custom-wake-words/) for training and deployment
 
